@@ -1,0 +1,34 @@
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Editors / IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+
+# Logs and temp files
+*.log
+*.tmp
+*.bak
+*~
+
+# Dependencies / build output (repo is static single-file HTML demos)
+node_modules/
+dist/
+build/
+out/
+.pytest_cache/
+__pycache__/
+*.pyc
+.venv/
