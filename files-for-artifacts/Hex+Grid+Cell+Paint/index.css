@@ -1,0 +1,29 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Fragment+Mono&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root{
+  --bg:#0a0a0f;
+  --panel:#0e0e14;
+  --panel2:#15151e;
+  --panel3:#1a1a24;
+  --border:#23232f;
+  --border2:#2a2a3a;
+  --paper:#fdfaf3;
+  --ink:#1a1a24;
+  --muted:#9a958c;
+  --accent:#7c5cff;
+  --accent2:#00e5ff;
+  --erase:#ff4d6d;
+  --text:#ece9e3;
+  --text-dim:#7a7680;
+}
+
+*{font-family:"JetBrains Mono", ui-monospace, monospace;}
+html,body{margin:0;background:var(--bg);color:var(--text);}
+
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-thumb{background:#2a2a3a;border-radius:99px}
+::-webkit-scrollbar-track{background:transparent}
