@@ -11,7 +11,7 @@ browser — no backend, no build step.
 
 [index.html](index.html)
 loads any lab from [lab-sources/](lab-sources)
-(Hull, Dot Shading, Hex Paint) into one page: pick a lab
+(Hull, Dot Shading, Hex Paint, Metaball Grid, Vector Field) into one page: pick a lab
 in the top bar, or deep-link with `?app=hull`.
 It compiles the `App.tsx` + `index.css` sources live in
 the browser — it does not load the prebuilt files in
@@ -40,7 +40,9 @@ snappable grid are bridged with arc/bezier neck paths
   (bridges only if `d <= r1 + r2*K`, Sato orig 2.5),
   goo tightness `v`, handle size, brush radius.
 - Toggles: snap to grid, show influence, heatmap,
-  bridge preview, adherence visualization.
+  bridge preview, adherence visualization,
+  **field contour (d3-contour / marching squares)** — see
+  [refs/arc-metaball-marching-squares.md](refs/arc-metaball-marching-squares.md).
 - Color groups with a live component list and
   one-click SVG export of the Sato paths.
 

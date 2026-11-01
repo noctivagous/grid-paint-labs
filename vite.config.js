@@ -15,7 +15,7 @@ const rawLabSources = () => ({
     server.middlewares.use((req, res, next) => {
       const urlPath = (req.url || '').split('?')[0];
       const isLabFile = urlPath.startsWith('/lab-sources/') &&
-        (urlPath.endsWith('/App.tsx') || urlPath.endsWith('/index.css'));
+        (urlPath.endsWith('.tsx') || urlPath.endsWith('.ts') || urlPath.endsWith('.css'));
       const isLibraryFile = urlPath.startsWith('/NCTGraphite/packages/nctgraphite/src/') &&
         (urlPath.endsWith('.ts') || urlPath.endsWith('.tsx') || urlPath.endsWith('.css'));
       if (!isLabFile && !isLibraryFile) return next();

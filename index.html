@@ -44,7 +44,13 @@ import { createRoot } from 'https://esm.sh/react-dom@18.3.1/client';
 import { createElement } from 'https://esm.sh/react@18.3.1';
 
 const REACT_URL = 'https://esm.sh/react@18.3.1';
+const REACT_DOM_URL = 'https://esm.sh/react-dom@18.3.1';
 const JSX_RUNTIME_URL = 'https://esm.sh/react@18.3.1/jsx-runtime';
+// Bare npm specifiers cannot stay in blob modules (no import map). Vite would
+// also rewrite them to `/node_modules/.vite/deps/…`, which blobs cannot load.
+const NPM_URLS = {
+  'd3-contour': 'https://esm.sh/d3-contour@4',
+};
 
 // NCTGraphite library resolution: lab App.tsx files import from
 // '@nct/nctgraphite', served from the submodule checkout. Compiled
@@ -70,6 +76,51 @@ async function fetchText(path) {
   return text;
 }
 
+async function resolveRelative(dir, spec) {
+  const noJs = dir + spec.replace(/\.js$/, '');
+  if (/\.(ts|tsx|css)$/.test(noJs)) return noJs;
+  for (const ext of ['.tsx', '.ts']) {
+    try {
+      await fetchText(noJs + ext);
+      return noJs + ext;
+    } catch (e) { /* try next */ }
+  }
+  return noJs;
+}
+
+function rewriteBareNpm(src) {
+  for (const [name, url] of Object.entries(NPM_URLS)) {
+    src = src.split(`from '${name}'`).join(`from '${url}'`).split(`from "${name}"`).join(`from '${url}'`);
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    src = src.replace(
+      new RegExp(`from\\s*(['"])\\/node_modules\\/\\.vite\\/deps\\/${escaped}\\.js[^'"]*\\1`, 'g'),
+      `from '${url}'`
+    );
+  }
+  const reactDomClient = `${REACT_DOM_URL}/client`;
+  src = src.replace(
+    /from\s*(['"])\/node_modules\/\.vite\/deps\/react-dom\.js[^'"]*\1/g,
+    `from '${REACT_DOM_URL}'`
+  );
+  return src
+    .replace(/from\s*(['"])react-dom\/client\1/g, `from '${reactDomClient}'`)
+    .replace(/from\s*(['"])react-dom\1/g, `from '${REACT_DOM_URL}'`)
+    .replace(/from\s*(['"])react\/jsx-runtime\1/g, `from '${JSX_RUNTIME_URL}'`)
+    .replace(/from\s*(['"])react\1/g, `from '${REACT_URL}'`);
+}
+
+async function rewriteLabImports(src, dir) {
+  const specs = [...new Set(
+    [...src.matchAll(/from\s*(['"])(\.[^'"]+|@nct\/nctgraphite)\1/g)].map((m) => m[2])
+  )];
+  for (const spec of specs) {
+    const dep = spec === '@nct/nctgraphite' ? LIB_INDEX : await resolveRelative(dir, spec);
+    const url = await compileModule(dep);
+    src = src.split(`from '${spec}'`).join(`from '${url}'`).split(`from "${spec}"`).join(`from "${url}"`);
+  }
+  return rewriteBareNpm(src);
+}
+
 async function compileModule(path) {
   if (moduleCache.has(path)) return moduleCache.get(path);
   let src = await fetchText(path);
@@ -83,27 +134,7 @@ async function compileModule(path) {
     }).code;
   }
   const dir = path.slice(0, path.lastIndexOf('/') + 1);
-  const specs = [...new Set(
-    [...src.matchAll(/from\s*(['"])(\.[^'"]+|@nct\/nctgraphite)\1/g)].map((m) => m[2])
-  )];
-  for (const spec of specs) {
-    let dep;
-    if (spec === '@nct/nctgraphite') {
-      dep = LIB_INDEX;
-    } else {
-      const noJs = dir + spec.replace(/\.js$/, '');
-      dep = noJs;
-      if (/\.js$/.test(spec)) {
-        try { await fetchText(noJs + '.tsx'); dep = noJs + '.tsx'; }
-        catch (e) { dep = noJs + '.ts'; }
-      }
-    }
-    const url = await compileModule(dep);
-    src = src.split(`from '${spec}'`).join(`from '${url}'`).split(`from "${spec}"`).join(`from "${url}"`);
-  }
-  src = src
-    .replace(/from\s*(['"])react\/jsx-runtime\1/g, `from '${JSX_RUNTIME_URL}'`)
-    .replace(/from\s*(['"])react\1/g, `from '${REACT_URL}'`);
+  src = await rewriteLabImports(src, dir);
   const url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
   ownedUrls.push(url);
   moduleCache.set(path, url);
@@ -119,35 +150,14 @@ async function compileSource(path, text) {
       ['react', { runtime: 'automatic' }],
     ],
   }).code;
-  const specs = [...new Set(
-    [...src.matchAll(/from\s*(['"])(\.[^'"]+|@nct\/nctgraphite)\1/g)].map((m) => m[2])
-  )];
-  for (const spec of specs) {
-    let dep;
-    if (spec === '@nct/nctgraphite') {
-      dep = LIB_INDEX;
-    } else {
-      const noJs = dir + spec.replace(/\.js$/, '');
-      dep = noJs;
-      if (/\.js$/.test(spec)) {
-        try { await fetchText(noJs + '.tsx'); dep = noJs + '.tsx'; }
-        catch (e) { dep = noJs + '.ts'; }
-      }
-    }
-    const url = await compileModule(dep);
-    src = src.split(`from '${spec}'`).join(`from '${url}'`).split(`from "${spec}"`).join(`from "${url}"`);
-  }
-  src = src
-    .replace(/from\s*(['"])react\/jsx-runtime\1/g, `from '${JSX_RUNTIME_URL}'`)
-    .replace(/from\s*(['"])react\1/g, `from '${REACT_URL}'`);
-  return src;
+  return rewriteLabImports(src, dir);
 }
 
 const APPS = [
   { id: 'hull', title: 'Grid Cell Hull Lab', dir: 'lab-sources/Grid+Cell+Hull+Lab' },
   { id: 'shading', title: 'Grid Dot Shading Lab', dir: 'lab-sources/Grid+Dot+Shading+Lab' },
   { id: 'hex', title: 'Hex Grid Cell Paint', dir: 'lab-sources/Hex+Grid+Cell+Paint' },
-  { id: 'arc', title: 'Arc Metaball Grid Lab', dir: 'lab-sources/Arc+Metaball+Grid+Lab', hidden: true },
+  { id: 'arc', title: 'Metaball Grid Lab', dir: 'lab-sources/Arc+Metaball+Grid+Lab' },
   { id: 'vector', title: 'Grid Paint Vector Field Lab', dir: 'lab-sources/Grid+Paint+Vector+Field+Key' },
 ];
 

@@ -752,7 +752,7 @@ export default function App(){
             <div className="text-[#5a5860] hidden md:block">Mouse aims — keys paint. Hold F over hexes to activate.</div>
           </div>
 
-          <div ref={containerRef} className="flex-1 relative bg-[#07070a] grid place-items-start justify-items-center p-3 md:p-6 overflow-hidden">
+          <div ref={containerRef} data-nct-stage="" tabIndex={-1} className="flex-1 relative bg-[#07070a] grid place-items-start justify-items-center p-3 md:p-6 overflow-hidden">
             <div className="relative shadow-[0_0_0_1px_#23232f,0_20px_60px_rgba(0,0,0,0.5)] rounded-[12px] overflow-hidden bg-[#fdfaf3]">
               <canvas
                 ref={canvasRef}

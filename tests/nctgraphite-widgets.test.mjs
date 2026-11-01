@@ -21,14 +21,18 @@ async function loadProbe() {
       NCTGraphiteDialog, NCTGraphiteDialogMeta,
       NCTGraphiteToast, NCTGraphiteToastMeta,
       NCTGraphiteStageFooter, NCTGraphiteStageMeta,
+      NCTGraphiteSlider, NCTGraphiteSliderMeta,
       NCTGraphiteToggle, NCTGraphiteToggleMeta,
+      NCTGraphiteHint, NCTGraphiteHintMeta,
     } from ${JSON.stringify(LIB_INDEX)};
     export const metas = {
       keymap: NCTGraphiteKeyMapMeta,
       dialog: NCTGraphiteDialogMeta,
       toast: NCTGraphiteToastMeta,
       footer: NCTGraphiteStageMeta,
+      slider: NCTGraphiteSliderMeta,
       toggle: NCTGraphiteToggleMeta,
+      hint: NCTGraphiteHintMeta,
     };
     const cmds = [
       { id: 'flow', label: 'FLOW', desc: 'paint vector flows', defaultKey: 'f' },
@@ -54,6 +58,8 @@ async function loadProbe() {
         footer: renderToString(React.createElement(NCTGraphiteStageFooter, null, 'left', 'right')),
         toggleBox: renderToString(React.createElement(NCTGraphiteToggle, { label: 'OPT', checked: true, onChange: noop })),
         toggleSwitch: renderToString(React.createElement(NCTGraphiteToggle, { label: 'OPT', checked: false, onChange: noop, controlStyle: 'switch' })),
+        sliderHint: renderToString(React.createElement(NCTGraphiteSlider, { label: 'GAIN', hint: 'help text', value: 1, min: 0, max: 2, onChange: noop })),
+        hintOnly: renderToString(React.createElement(NCTGraphiteHint, { text: 'Tooltip body' })),
       };
     }
   `);
@@ -78,6 +84,8 @@ test('new lab-idiom widgets carry Meta contracts', async () => {
   assert.ok(metas.footer.description.includes('StageFooter'));
   assert.equal(metas.toggle.tag, 'NCTGraphiteToggle');
   assert.ok(metas.toggle.props.controlStyle.description.includes('"switch"'));
+  assert.equal(metas.hint.tag, 'NCTGraphiteHint');
+  assert.ok(metas.slider.props.hint.description.includes('tooltip'));
   assert.ok(metas.keymap.props.heldActions.description.includes('highlight'));
   assert.ok(metas.keymap.props.emphasizeIds.description.includes('accent'));
 });
@@ -96,4 +104,6 @@ test('new lab-idiom widgets render their contracts', async () => {
   assert.ok(out.footer.includes('<footer') && out.footer.includes('left'));
   assert.ok(out.toggleBox.includes('type="checkbox"') && !out.toggleBox.includes('role="switch"'));
   assert.ok(out.toggleSwitch.includes('role="switch"') && !out.toggleSwitch.includes('type="checkbox"'));
+  assert.ok(out.sliderHint.includes('nctgraphite-hint-trigger') && out.sliderHint.includes('nctgraphite-hint-circle'));
+  assert.ok(out.hintOnly.includes('nctgraphite-popover-anchor') && out.hintOnly.includes('<circle'));
 });

@@ -56,8 +56,8 @@ export default function App(){
   // Brush
   const [brushRadius,setBrushRadius] = useState(110);
   const [intensity,setIntensity] = useState(1.2);
-  const [falloffPower,setFalloffPower] = useState(1.8);
-  const [falloffType,setFalloffType] = useState<FalloffType>("Smoothstep");
+  const [falloffPower,setFalloffPower] = useState(1);
+  const [falloffType,setFalloffType] = useState<FalloffType>("Linear");
 
   // Refs for fast loop
   const pointsRef = useRef<Point[]>([]);
@@ -246,8 +246,8 @@ export default function App(){
     setRotationJitter(val.rotationJitter ?? 22);
     setBrushRadius(val.brushRadius ?? 110);
     setIntensity(val.intensity ?? 1.2);
-    setFalloffPower(val.falloffPower ?? 1.8);
-    setFalloffType(val.falloffType ?? "Smoothstep");
+    setFalloffPower(val.falloffPower ?? 1);
+    setFalloffType(val.falloffType ?? "Linear");
     setToast(`Loaded ${val.name}`);
     setTimeout(()=>setToast(null),1300);
   };
@@ -735,7 +735,7 @@ export default function App(){
 
         {/* Center canvas */}
         <div className="order-1 lg:order-2">
-          <div ref={containerRef} onMouseMove={onCanvasMouseMove} onMouseDown={handleCanvasMouseDown} className="relative rounded-[22px] overflow-hidden bg-[#fdfaf3] border border-[#0e0e14]/10 shadow-[0_16px_40px_rgba(14,14,20,0.08)]">
+          <div ref={containerRef} data-nct-stage="" tabIndex={-1} onMouseMove={onCanvasMouseMove} onMouseDown={handleCanvasMouseDown} className="relative rounded-[22px] overflow-hidden bg-[#fdfaf3] border border-[#0e0e14]/10 shadow-[0_16px_40px_rgba(14,14,20,0.08)]">
             <div className="relative w-full aspect-[960/680] bg-[#fdfaf3]">
               <canvas ref={canvasRef} width={CANVAS_W} height={CANVAS_H} className="absolute inset-0 w-full h-full" />
               <canvas ref={overlayRef} width={CANVAS_W} height={CANVAS_H} className="absolute inset-0 w-full h-full pointer-events-none" />
@@ -800,33 +800,6 @@ export default function App(){
         {/* Right controls */}
         <div className="order-3">
           <div className="rounded-[18px] bg-[#0e0e14] text-[#fdfaf3] p-3 md:p-4 space-y-5">
-            {/* Presets - persistent */}
-            <div>
-              <div className="flex items-center justify-between">
-                <div className="mono text-[10px] tracking-[0.18em] opacity-60">SAVED PRESETS</div>
-                <div className="mono text-[9px] opacity-50">{presets.length} / 1000</div>
-              </div>
-              <div className="mt-3 bg-[#1a1a24] border border-white/10 rounded-[12px] p-2.5">
-                <NCTGraphiteStack direction="row" gap={8}>
-                  <input value={presetName} onChange={e=>setPresetName(e.target.value)} placeholder="Name (optional)" className="flex-1 h-8 px-3 rounded-full bg-[#0e0e14] border border-white/10 mono text-[11px] text-white placeholder:text-white/30 outline-none focus:border-[#7c5cff]" />
-                  <button disabled={saving} onClick={savePreset} className="px-4 h-8 rounded-full bg-[#fdfaf3] text-black mono text-[11px] font-bold hover:bg-white disabled:opacity-50 transition">{saving? "Saving...":"Save"}</button>
-                </NCTGraphiteStack>
-                {presetsError && <div className="mono text-[10px] text-[#ff5c7a] mt-2">{presetsError}</div>}
-                <div className="mt-3 max-h-[160px] overflow-y-auto space-y-1.5 pr-1">
-                  {presets.length===0 && <div className="mono text-[10px] opacity-40 py-2">No saved presets yet. Current brush + grid + shape will be stored.</div>}
-                  {presets.map(r=>(
-                    <div key={r.id} className="flex items-center gap-2 rounded-[10px] bg-[#0e0e14] border border-white/10 px-2.5 py-2">
-                      <button onClick={()=>applyPreset(r.value)} className="flex-1 text-left min-w-0">
-                        <div className="mono text-[11px] font-bold truncate">{r.value?.name || "Untitled"}</div>
-                        <div className="mono text-[9px] opacity-50 truncate">{r.value?.shapeType} • {r.value?.cols}x{r.value?.rows} • {r.value?.falloffType}</div>
-                      </button>
-                      <button onClick={()=>deletePreset(r.id)} className="h-6 w-6 rounded-full bg-white/10 grid place-items-center text-[10px] hover:bg-[#ff5c7a] hover:text-white">✕</button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
             {/* Grid */}
             <div>
               <div className="flex items-center justify-between">
@@ -916,6 +889,33 @@ export default function App(){
               </NCTGraphiteStack>
               <div className="mt-3 mono text-[9px] opacity-30 leading-[1.3]">
                 Export bakes current jitter, gain, rotation. SVG preserves vector shapes. Presets are durable via trusted backend.
+              </div>
+            </div>
+
+            {/* Presets - persistent */}
+            <div>
+              <div className="flex items-center justify-between">
+                <div className="mono text-[10px] tracking-[0.18em] opacity-60">SAVED PRESETS</div>
+                <div className="mono text-[9px] opacity-50">{presets.length} / 1000</div>
+              </div>
+              <div className="mt-3 bg-[#1a1a24] border border-white/10 rounded-[12px] p-2.5">
+                <NCTGraphiteStack direction="row" gap={8}>
+                  <input value={presetName} onChange={e=>setPresetName(e.target.value)} placeholder="Name (optional)" className="flex-1 h-8 px-3 rounded-full bg-[#0e0e14] border border-white/10 mono text-[11px] text-white placeholder:text-white/30 outline-none focus:border-[#7c5cff]" />
+                  <button disabled={saving} onClick={savePreset} className="px-4 h-8 rounded-full bg-[#fdfaf3] text-black mono text-[11px] font-bold hover:bg-white disabled:opacity-50 transition">{saving? "Saving...":"Save"}</button>
+                </NCTGraphiteStack>
+                {presetsError && <div className="mono text-[10px] text-[#ff5c7a] mt-2">{presetsError}</div>}
+                <div className="mt-3 max-h-[160px] overflow-y-auto space-y-1.5 pr-1">
+                  {presets.length===0 && <div className="mono text-[10px] opacity-40 py-2">No saved presets yet. Current brush + grid + shape will be stored.</div>}
+                  {presets.map(r=>(
+                    <div key={r.id} className="flex items-center gap-2 rounded-[10px] bg-[#0e0e14] border border-white/10 px-2.5 py-2">
+                      <button onClick={()=>applyPreset(r.value)} className="flex-1 text-left min-w-0">
+                        <div className="mono text-[11px] font-bold truncate">{r.value?.name || "Untitled"}</div>
+                        <div className="mono text-[9px] opacity-50 truncate">{r.value?.shapeType} • {r.value?.cols}x{r.value?.rows} • {r.value?.falloffType}</div>
+                      </button>
+                      <button onClick={()=>deletePreset(r.id)} className="h-6 w-6 rounded-full bg-white/10 grid place-items-center text-[10px] hover:bg-[#ff5c7a] hover:text-white">✕</button>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
           </div>

@@ -22,6 +22,8 @@ function resolveSpec(spec, fromDir) {
     if (fs.existsSync(path.join(root, noJs + '.tsx'))) return noJs + '.tsx';
     return noJs + '.ts';
   }
+  if (fs.existsSync(path.join(root, noJs + '.tsx'))) return noJs + '.tsx';
+  if (fs.existsSync(path.join(root, noJs + '.ts'))) return noJs + '.ts';
   return noJs;
 }
 
@@ -134,4 +136,24 @@ test('vite dev plugin serves library sources byte-for-byte', () => {
     config.includes('/NCTGraphite/packages/nctgraphite/src/'),
     'vite plugin must raw-serve library sources or blob-module imports fail under npm run dev'
   );
+  assert.ok(
+    config.includes("urlPath.endsWith('.ts')"),
+    'vite plugin must raw-serve lab .ts modules (not only App.tsx) or Vite rewrites npm deps to /node_modules/.vite/deps'
+  );
+});
+
+test('blob loader rewrites d3-contour to a hierarchical CDN URL', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.ok(html.includes("'d3-contour': 'https://esm.sh/d3-contour@4'"));
+  assert.ok(html.includes('rewriteBareNpm'));
+});
+
+test('blob loader rewrites react-dom before react for library portals', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.ok(html.includes('REACT_DOM_URL'));
+  assert.ok(html.includes("react-dom\\/client"));
+  assert.ok(html.includes("from '${REACT_DOM_URL}'"));
+  const reactDomIdx = html.indexOf("react-dom\\1");
+  const reactIdx = html.indexOf("from\\s*(['\"])react\\1");
+  assert.ok(reactDomIdx >= 0 && reactIdx >= 0 && reactDomIdx < reactIdx);
 });

@@ -21,13 +21,14 @@ const HULL_COMMANDS: NCTGraphiteCommandDef[] = [
   { id: "brushSmaller", label: "Brush 16-160", desc: "Shrink brush", defaultKey: "[" },
   { id: "brushLarger", label: "Brush 16-160", desc: "Grow brush", defaultKey: "]" },
   { id: "gridSquare", label: "Grid Square", desc: "Square grid", defaultKey: "1" },
-  { id: "gridHexFlat", label: "Grid HexF", desc: "Flat-top hex grid", defaultKey: "2" },
-  { id: "gridHexPointy", label: "Grid HexP", desc: "Pointy-top hex grid", defaultKey: "3" },
-  { id: "gridTriangle", label: "Grid Tri", desc: "Triangle grid", defaultKey: "4" },
-  { id: "hullTight", label: "Hull Tight", desc: "Tight hull", defaultKey: "5" },
-  { id: "hullSmooth", label: "Hull Smooth", desc: "Smooth hull", defaultKey: "6" },
-  { id: "hullConvex", label: "Hull Convex", desc: "Convex hull", defaultKey: "7" },
-  { id: "hullConcave", label: "Hull Concave", desc: "Concave hull", defaultKey: "8" },
+  { id: "gridHexHoriz", label: "Grid Hex Horiz", desc: "Horizontal hex grid", defaultKey: "2" },
+  { id: "gridHexVert", label: "Grid Hex Vert", desc: "Vertical hex grid", defaultKey: "3" },
+  { id: "gridTriHoriz", label: "Grid Tri Horiz", desc: "Horizontal triangle grid", defaultKey: "4" },
+  { id: "gridTriVert", label: "Grid Tri Vert", desc: "Vertical triangle grid", defaultKey: "5" },
+  { id: "hullTight", label: "Hull Tight", desc: "Tight hull", defaultKey: "6" },
+  { id: "hullSmooth", label: "Hull Smooth", desc: "Smooth hull", defaultKey: "7" },
+  { id: "hullConvex", label: "Hull Convex", desc: "Convex hull", defaultKey: "8" },
+  { id: "hullConcave", label: "Hull Concave", desc: "Concave hull", defaultKey: "9" },
 ];
 
 // Types
@@ -54,9 +55,28 @@ type Hull = {
   perimeter: number;
 };
 
-type GridType = 'square' | 'hexFlat' | 'hexPointy' | 'triangle';
+type GridType = 'square' | 'hexHoriz' | 'hexVert' | 'triHoriz' | 'triVert';
 type HullMode = 'tight' | 'smooth' | 'convex' | 'concave';
 type BrushShape = 'circle' | 'square' | 'triangle';
+
+const GRID_TYPES: GridType[] = ['square', 'hexHoriz', 'hexVert', 'triHoriz', 'triVert'];
+const GRID_LABELS: Record<GridType, string> = {
+  square: 'SQUARE',
+  hexHoriz: 'HEX HORIZ',
+  hexVert: 'HEX VERT',
+  triHoriz: 'TRI HORIZ',
+  triVert: 'TRI VERT',
+};
+const GRID_ALIASES: Record<string, GridType> = {
+  square: 'square',
+  hexFlat: 'hexHoriz',
+  hexHoriz: 'hexHoriz',
+  hexPointy: 'hexVert',
+  hexVert: 'hexVert',
+  triangle: 'triHoriz',
+  triHoriz: 'triHoriz',
+  triVert: 'triVert',
+};
 
 // Helpers
 const quant = (n: number) => Math.round(n * 100);
@@ -281,33 +301,38 @@ function genHexPointy(width: number, height: number, size: number, jitter: numbe
   return cells;
 }
 
-function genTriangle(width: number, height: number, triSize: number, jitter: number): Cell[] {
-  const triH = (triSize * Math.sqrt(3)) / 2;
-  const cols = Math.ceil(width / triSize) + 4;
-  const rows = Math.ceil(height / triH) + 4;
+function genTriangle(width: number, height: number, triSize: number, jitter: number, vertical = false): Cell[] {
+  const triAlt = (triSize * Math.sqrt(3)) / 2;
+  const along = vertical ? height : width;
+  const across = vertical ? width : height;
+  const cols = Math.ceil(along / triSize) + 4;
+  const rows = Math.ceil(across / triAlt) + 4;
   const latticeJitter = new Map<string, { dx: number; dy: number }>();
-  const getLattice = (x: number, y: number) => {
+  const project = (alongX: number, acrossY: number) => {
+    const x = vertical ? acrossY : alongX;
+    const y = vertical ? alongX : acrossY;
     const k = `${Math.round(x * 10)}_${Math.round(y * 10)}`;
-    if (!latticeJitter.has(k)) latticeJitter.set(k, getJitter(`tri-${k}`, jitter, triSize));
+    if (!latticeJitter.has(k)) latticeJitter.set(k, getJitter(`tri-${vertical ? 'v' : 'h'}-${k}`, jitter, triSize));
     const off = latticeJitter.get(k)!;
     return { x: x + off.dx, y: y + off.dy };
   };
+  const inBounds = (cx: number, cy: number) =>
+    cx >= -triSize && cx <= width + triSize && cy >= -triSize && cy <= height + triSize;
   const cells: Cell[] = [];
   let id = 0;
   for (let r = -2; r < rows; r++) {
     for (let c = -2; c < cols; c++) {
-      const baseX = c * triSize + (r % 2 === 1 ? triSize / 2 : 0) - triSize;
-      const baseY = r * triH - triH;
-      const p0 = getLattice(baseX, baseY);
-      const p1 = getLattice(baseX + triSize, baseY);
-      const p2 = getLattice(baseX + triSize + triSize / 2, baseY + triH);
-      const p3 = getLattice(baseX + triSize / 2, baseY + triH);
+      const baseAlong = c * triSize + (r % 2 === 1 ? triSize / 2 : 0) - triSize;
+      const baseAcross = r * triAlt - triAlt;
+      const p0 = project(baseAlong, baseAcross);
+      const p1 = project(baseAlong + triSize, baseAcross);
+      const p2 = project(baseAlong + triSize + triSize / 2, baseAcross + triAlt);
+      const p3 = project(baseAlong + triSize / 2, baseAcross + triAlt);
 
-      // tri1 p0,p1,p3
       const t1Corners = [p0, p1, p3];
       const t1Cx = (p0.x + p1.x + p3.x) / 3;
       const t1Cy = (p0.y + p1.y + p3.y) / 3;
-      if (t1Cx >= -triSize && t1Cx <= width + triSize && t1Cy >= -triSize && t1Cy <= height + triSize) {
+      if (inBounds(t1Cx, t1Cy)) {
         const raw: EdgeRaw[] = [
           { x1: p0.x, y1: p0.y, x2: p1.x, y2: p1.y },
           { x1: p1.x, y1: p1.y, x2: p3.x, y2: p3.y },
@@ -316,11 +341,10 @@ function genTriangle(width: number, height: number, triSize: number, jitter: num
         const edges = raw.map((e) => ({ ...e, key: edgeKey(e.x1, e.y1, e.x2, e.y2) }));
         cells.push({ id: id++, cx: t1Cx, cy: t1Cy, col: c, row: r, corners: t1Corners, edges });
       }
-      // tri2 p1,p2,p3
       const t2Corners = [p1, p2, p3];
       const t2Cx = (p1.x + p2.x + p3.x) / 3;
       const t2Cy = (p1.y + p2.y + p3.y) / 3;
-      if (t2Cx >= -triSize && t2Cx <= width + triSize && t2Cy >= -triSize && t2Cy <= height + triSize) {
+      if (inBounds(t2Cx, t2Cy)) {
         const raw: EdgeRaw[] = [
           { x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y },
           { x1: p2.x, y1: p2.y, x2: p3.x, y2: p3.y },
@@ -617,7 +641,7 @@ export default function App() {
 
   // Grid settings
   const [gridType, setGridType] = useState<GridType>('square');
-  const [cellSize, setCellSize] = useState(28);
+  const [cellSize, setCellSize] = useState(14);
   const [jitter, setJitter] = useState(0);
   const [brushRadius, setBrushRadius] = useState(64);
   const [brushShape, setBrushShape] = useState<BrushShape>('circle');
@@ -638,6 +662,12 @@ export default function App() {
   const [mousePos, setMousePos] = useState<Vec | null>(null);
   const [isMouseDown, setIsMouseDown] = useState(false);
   const [brushMode, setBrushModeState] = useState<'activate' | 'erase'>('activate');
+  const pendingActiveRef = useRef<number[] | null>(null);
+  const loadGridType = (next: GridType) => {
+    pendingActiveRef.current = null;
+    setActiveIds(new Set());
+    setGridType(next);
+  };
   const { heldActions: hullHeld } = useNCTGraphiteCommands({
     commands: HULL_COMMANDS,
     ignoreInputs: true,
@@ -664,10 +694,11 @@ export default function App() {
       if (id === "rotateCw") setBrushAngle((a) => (a + 15) % 360);
       if (id === "brushSmaller") setBrushRadius((r) => Math.max(16, r - 8));
       if (id === "brushLarger") setBrushRadius((r) => Math.min(160, r + 8));
-      if (id === "gridSquare") setGridType('square');
-      if (id === "gridHexFlat") setGridType('hexFlat');
-      if (id === "gridHexPointy") setGridType('hexPointy');
-      if (id === "gridTriangle") setGridType('triangle');
+      if (id === "gridSquare") loadGridType('square');
+      if (id === "gridHexHoriz") loadGridType('hexHoriz');
+      if (id === "gridHexVert") loadGridType('hexVert');
+      if (id === "gridTriHoriz") loadGridType('triHoriz');
+      if (id === "gridTriVert") loadGridType('triVert');
       if (id === "hullTight") setHullMode('tight');
       if (id === "hullSmooth") setHullMode('smooth');
       if (id === "hullConvex") setHullMode('convex');
@@ -772,19 +803,25 @@ export default function App() {
   };
 
   const handleLoadLab = (val: any) => {
-    if (val.gridType) setGridType(val.gridType);
+    const nextType = typeof val.gridType === 'string' ? GRID_ALIASES[val.gridType] : undefined;
+    if (nextType && nextType !== gridType) {
+      if (Array.isArray(val.active)) pendingActiveRef.current = val.active;
+      setGridType(nextType);
+    } else if (Array.isArray(val.active)) {
+      setActiveIds(new Set(val.active));
+    }
     if (val.cellSize) setCellSize(val.cellSize);
     if (val.hullMode) setHullMode(val.hullMode);
     if (val.smoothRadius !== undefined) setSmoothRadius(val.smoothRadius);
-    if (Array.isArray(val.active)) setActiveIds(new Set(val.active));
   };
 
   // Grid data
   const gridData = useMemo(() => {
     let cells: Cell[] = [];
     if (gridType === 'square') cells = genSquare(WIDTH, HEIGHT, cellSize, jitter);
-    else if (gridType === 'hexFlat') cells = genHexFlat(WIDTH, HEIGHT, cellSize, jitter);
-    else if (gridType === 'hexPointy') cells = genHexPointy(WIDTH, HEIGHT, cellSize, jitter);
+    else if (gridType === 'hexHoriz') cells = genHexFlat(WIDTH, HEIGHT, cellSize, jitter);
+    else if (gridType === 'hexVert') cells = genHexPointy(WIDTH, HEIGHT, cellSize, jitter);
+    else if (gridType === 'triVert') cells = genTriangle(WIDTH, HEIGHT, cellSize, jitter, true);
     else cells = genTriangle(WIDTH, HEIGHT, cellSize, jitter);
     const { edgeMap, adjacency } = buildTopology(cells);
     return { cells, edgeMap, adjacency, cols: 0, rows: 0 };
@@ -792,14 +829,15 @@ export default function App() {
 
   const { cells, edgeMap, adjacency } = gridData;
 
-  // Keep activeIds valid when grid changes (reset if cells changed drastically)
+  // A newly loaded grid mode starts empty. Saved sessions restore after the type switch.
   useEffect(() => {
-    setActiveIds((prev) => {
-      const valid = new Set<number>();
-      for (const id of prev) if (id < cells.length) valid.add(id);
-      return valid;
-    });
-  }, [cells.length]);
+    if (pendingActiveRef.current) {
+      setActiveIds(new Set(pendingActiveRef.current));
+      pendingActiveRef.current = null;
+      return;
+    }
+    setActiveIds(new Set());
+  }, [gridType]);
 
   // Hull computation
   const computeNow = useCallback(() => {
@@ -1123,7 +1161,7 @@ export default function App() {
           <span className="hidden md:inline text-[10px] tracking-widest text-[var(--text-dim)] ml-4">MARCHING SQUARES REPLACED BY EXPLICIT CELL + HULL • 60FPS</span>
         </div>
         <div className="flex items-center gap-2 text-[10px]">
-          <span className="px-2 py-1 bg-[#1a1a24] rounded">{gridType}</span>
+          <span className="px-2 py-1 bg-[#1a1a24] rounded">{GRID_LABELS[gridType]}</span>
           <span className="px-2 py-1 bg-[#1a1a24] rounded">{hullMode}</span>
           <span className="px-2 py-1 bg-[var(--accent)] text-black rounded font-bold">{activeCount} CELLS</span>
         </div>
@@ -1132,7 +1170,7 @@ export default function App() {
       footer={
       <footer className="border-t border-[#1a1a24] bg-[#0e0e14] px-4 py-2 text-[10px] tracking-widest text-[#9a958c] flex justify-between">
         <span>GRID CELL HULL LAB • DARK PANELS #0e0e14 #1a1a24 • ACCENT #c2a878 #7c5cff • MONO JetBrains Mono • 60FPS SPATIAL HASH</span>
-        <span className="hidden md:inline">SQUARE = ORTHO TECHNICAL • HEX FLAT = HONEYCOMB ORGANIC • TRIANGLE = 60° DYNAMIC</span>
+        <span className="hidden md:inline">SQUARE = ORTHO TECHNICAL • HEX HORIZ/VERT = HONEYCOMB • TRI HORIZ/VERT = 60° DYNAMIC</span>
       </footer>
       }
     >
@@ -1147,8 +1185,8 @@ export default function App() {
               <div className="flex justify-between"><span>V</span><span>Regen Hull</span></div>
               <div className="flex justify-between"><span>X / ⇧X</span><span>Clear / Invert</span></div>
               <div className="flex justify-between"><span>[ ]</span><span>Brush 16-160</span></div>
-              <div className="flex justify-between"><span>1-4</span><span>Grid Square/HexF/HexP/Tri</span></div>
-              <div className="flex justify-between"><span>5-8</span><span>Hull Tight/Smooth/Convex/Concave</span></div>
+              <div className="flex justify-between"><span>1-5</span><span>Grid Square/Hex H-V/Tri H-V</span></div>
+              <div className="flex justify-between"><span>6-9</span><span>Hull Tight/Smooth/Convex/Concave</span></div>
               <div className="flex justify-between"><span>C</span><span>New Color Group</span></div>
               <div className="flex justify-between"><span>M / L</span><span>Show Grid / Fill Hull</span></div>
               <div className="flex justify-between"><span>B</span><span>Brush Circle/Square/Tri</span></div>
@@ -1160,9 +1198,10 @@ export default function App() {
             <div className="text-[11px] tracking-widest text-[var(--text-dim)] mb-2">GRID COMPARISON</div>
             <div className="text-[10px] leading-3.5 space-y-2 text-[#9a958c]">
               <div><span className="text-[#fdfaf3]">Square:</span> orthogonal, technical, laser-cut friendly, 90° hull.</div>
-              <div><span className="text-[#fdfaf3]">Hex Flat:</span> honeycomb, organic facade, 60°/120° hull, best for ornament.</div>
-              <div><span className="text-[#fdfaf3]">Hex Pointy:</span> vertical honeycomb, shirt pattern, dense packing.</div>
-              <div><span className="text-[#fdfaf3]">Triangle:</span> dynamic, star-like, 60° spikes, best for aggressive graphics.</div>
+              <div><span className="text-[#fdfaf3]">Hex Horiz:</span> honeycomb, organic facade, 60°/120° hull, best for ornament.</div>
+              <div><span className="text-[#fdfaf3]">Hex Vert:</span> vertical honeycomb, shirt pattern, dense packing.</div>
+              <div><span className="text-[#fdfaf3]">Tri Horiz:</span> bases run left-right, 60° spikes, aggressive graphics.</div>
+              <div><span className="text-[#fdfaf3]">Tri Vert:</span> bases run up-down, matching hex vert orientation.</div>
             </div>
           </div>
           <div className="h-px bg-[#1a1a24]" />
@@ -1207,7 +1246,7 @@ export default function App() {
           <div className="w-full max-w-[960px] flex flex-wrap gap-2 text-[10px] tracking-wide">
             <div className="px-2 py-1 bg-[#0e0e14] border border-[#1a1a24] rounded">MOUSE {mousePos ? `${mousePos.x.toFixed(0)},${mousePos.y.toFixed(0)}` : '--'}</div>
             <div className="px-2 py-1 bg-[#0e0e14] border border-[#1a1a24] rounded">BRUSH {brushRadius} {brushShape.toUpperCase()} {brushAngle}° • {brushMode.toUpperCase()} {isFPressed ? '[F]' : ''}{isEPressed ? '[E]' : ''}</div>
-            <div className="px-2 py-1 bg-[#0e0e14] border border-[#1a1a24] rounded">GRID {gridType} • {cellSize}px • {cells.length} cells</div>
+            <div className="px-2 py-1 bg-[#0e0e14] border border-[#1a1a24] rounded">GRID {GRID_LABELS[gridType]} • {cellSize}px • {cells.length} cells</div>
             <div className="px-2 py-1 bg-[#0e0e14] border border-[#1a1a24] rounded">{activeCount} ACTIVE • {clusterCount} CLUSTERS • LARGEST {largestCluster}</div>
             <div className="px-2 py-1 bg-[#0e0e14] border border-[#1a1a24] rounded">{hulls.length} HULLS • {hullMode.toUpperCase()} • AREA {totalArea.toFixed(0)} • PERIM {totalPerim.toFixed(0)}</div>
             <div className="px-2 py-1 bg-[#1a1a24] rounded">FPS 60 • SPATIAL HASH VIA EDGE MAP</div>
@@ -1235,8 +1274,8 @@ export default function App() {
           <div>
             <div className="text-[11px] tracking-widest text-[var(--text-dim)] mb-3">GRID</div>
             <NCTGraphiteGrid columns="repeat(2, 1fr)" gap={6} className="mb-3">
-              {(['square','hexFlat','hexPointy','triangle'] as GridType[]).map((t)=>(
-                <button key={t} onClick={()=>setGridType(t)} className={`py-2 text-[11px] rounded border ${gridType===t?'bg-[var(--accent)] text-black border-[var(--accent)] font-bold':'bg-[#1a1a24] border-[#222230] hover:bg-[#222230]'}`}>{t.toUpperCase()}</button>
+              {GRID_TYPES.map((t)=>(
+                <button key={t} onClick={()=>loadGridType(t)} className={`py-2 text-[11px] rounded border ${gridType===t?'bg-[var(--accent)] text-black border-[var(--accent)] font-bold':'bg-[#1a1a24] border-[#222230] hover:bg-[#222230]'}`}>{GRID_LABELS[t]}</button>
               ))}
             </NCTGraphiteGrid>
             <div className="space-y-3">
