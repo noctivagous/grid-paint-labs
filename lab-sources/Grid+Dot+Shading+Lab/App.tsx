@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
-import { NCTGraphiteSlider, NCTGraphiteStack, NCTGraphiteGrid, useNCTGraphiteCommands } from "@nct/nctgraphite";
+import { NCTGraphiteSlider, NCTGraphiteStack, NCTGraphiteGrid, NCTGraphiteAppShell, useNCTGraphiteCommands } from "@nct/nctgraphite";
 import type { NCTGraphiteCommandDef } from "@nct/nctgraphite";
 
 const SHADING_COMMANDS: NCTGraphiteCommandDef[] = [
@@ -668,7 +668,12 @@ export default function App(){
   };
 
   return (
-    <div data-safe-area-inset-root className="min-h-screen w-full bg-[var(--paper)] text-[var(--ink)] overflow-x-clip selection:bg-[var(--accent)]/30" style={{boxSizing:'border-box', paddingTop:'var(--safe-area-inset-top)'}}>
+    <>
+    <NCTGraphiteAppShell
+      maxWidth={1600}
+      proportion="220px 1fr 300px"
+      className="bg-[var(--paper)] text-[var(--ink)] overflow-x-clip selection:bg-[var(--accent)]/30"
+      header={
       <div className="sticky top-0 z-30 border-b border-[var(--line)] bg-[#fdfaf3]/90 backdrop-blur" data-safe-area-sticky-top style={{top:'var(--safe-area-inset-top)'}}>
         <div className="mx-auto max-w-[1600px] px-4 md:px-6 h-[52px] flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -685,8 +690,8 @@ export default function App(){
           </div>
         </div>
       </div>
-
-      <NCTGraphiteGrid columns="1fr" wideMinWidth={1024} wideTemplate="220px 1fr 300px" gap={12} className="mx-auto max-w-[1600px] px-3 md:px-4 py-3 md:py-4">
+      }
+    >
         {/* Left keymap */}
         <div className="order-2 lg:order-1">
           <div className="rounded-[18px] bg-[var(--panel)] text-[#fdfaf3] p-3 md:p-4 lg:sticky lg:top-[66px]">
@@ -915,11 +920,10 @@ export default function App(){
             </div>
           </div>
         </div>
-      </NCTGraphiteGrid>
-
+    </NCTGraphiteAppShell>
       <style>{`
         @keyframes bounce{0%{transform:translate(-50%,10px) scale(0.96); opacity:0} 100%{transform:translate(-50%,0) scale(1); opacity:1}}
       `}</style>
-    </div>
+    </>
   );
 }

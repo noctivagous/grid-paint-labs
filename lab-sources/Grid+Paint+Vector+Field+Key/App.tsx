@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   NCTGraphiteSlider, NCTGraphiteStack, NCTGraphiteGrid,
-  NCTGraphiteStage, NCTGraphiteStageBody, NCTGraphiteStagePanel, NCTGraphiteStageMain,
+  NCTGraphiteAppShell, NCTGraphiteStagePanel, NCTGraphiteStageMain,
   NCTGraphiteStageFooter, NCTGraphiteToggle, NCTGraphiteSegmented, NCTGraphitePanel,
   NCTGraphiteKeyMap, NCTGraphiteDialog, NCTGraphiteToast, useNCTGraphiteCommands,
 } from "@nct/nctgraphite";
@@ -447,7 +447,11 @@ export default function App() {
   };
 
   return (
-    <NCTGraphiteStage className="nctgraphite-font-alt-mono">
+    <NCTGraphiteAppShell
+      className="nctgraphite-font-alt-mono"
+      gap={0}
+      proportion="220px 1fr 300px"
+      header={<>
       <header className="h-[60px] shrink-0 flex items-center gap-4 px-4 border-b border-[#1a1a24] bg-[#0e0e14]">
         <div className="w-8 h-8 rounded-[8px] bg-[#00e5ff] grid place-items-center font-bold text-black">V</div>
         <h1 className="nctgraphite-font-display text-[18px] text-[#f5f1e8]">Grid Paint Vector Field — <em className="text-[#00e5ff]">hold F</em></h1>
@@ -491,8 +495,14 @@ export default function App() {
           </button>
         </div>
       </NCTGraphiteDialog>
-
-      <NCTGraphiteStageBody>
+      </>}
+      footer={
+      <NCTGraphiteStageFooter>
+        <span>GRID PAINT VECTOR FIELD • SEEK / VELOCITY / SWIRL • BUILT FOR TALKS · NO BACKEND · CANVAS 2D</span>
+        <span className="hidden md:inline">F FLOW • E ERASE • Q SMOOTH • N ATTRACTOR • G/V/C SEEK/VELO/SWIRL</span>
+      </NCTGraphiteStageFooter>
+      }
+    >
         <NCTGraphiteStagePanel side="left" width={220} className="bg-[#0e0e14] border-r border-[#1a1a24] p-4 flex flex-col gap-4 shrink-0 overflow-y-auto">
           <div className="text-[11px] tracking-[0.18em] text-[#7a7680]">CONTROLS / KEY-MAP</div>
           <NCTGraphitePanel title="PAINT + ERASE">
@@ -566,12 +576,6 @@ export default function App() {
             </NCTGraphiteGrid>
           </div>
         </NCTGraphiteStagePanel>
-      </NCTGraphiteStageBody>
-
-      <NCTGraphiteStageFooter>
-        <span>GRID PAINT VECTOR FIELD • SEEK / VELOCITY / SWIRL • BUILT FOR TALKS · NO BACKEND · CANVAS 2D</span>
-        <span className="hidden md:inline">F FLOW • E ERASE • Q SMOOTH • N ATTRACTOR • G/V/C SEEK/VELO/SWIRL</span>
-      </NCTGraphiteStageFooter>
-    </NCTGraphiteStage>
+    </NCTGraphiteAppShell>
   );
 }

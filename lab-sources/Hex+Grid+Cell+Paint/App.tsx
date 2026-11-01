@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from "react";
-import { NCTGraphiteSlider, NCTGraphiteStack, NCTGraphiteGrid, NCTGraphiteToggle, useNCTGraphiteCommands } from "@nct/nctgraphite";
+import { NCTGraphiteSlider, NCTGraphiteStack, NCTGraphiteGrid, NCTGraphiteAppShell, NCTGraphiteToggle, useNCTGraphiteCommands } from "@nct/nctgraphite";
 import type { NCTGraphiteCommandDef } from "@nct/nctgraphite";
 
 type GridType = "flat" | "pointy" | "square";
@@ -610,11 +610,13 @@ export default function App(){
   },[activeCount, colorIdx]);
 
   return (
-    <div
-      data-safe-area-inset-root
-      style={{boxSizing:"border-box", paddingTop:"var(--safe-area-inset-top)"}}
-      className="min-h-screen w-full bg-[#0a0a0f] flex flex-col overflow-x-clip selection:bg-[#7c5cff]/30"
-    >
+    <>
+    <NCTGraphiteAppShell
+      maxWidth={1520}
+      gap={1}
+      proportion="3fr 6fr 3fr"
+      className="bg-[#0a0a0f] overflow-x-clip selection:bg-[#7c5cff]/30"
+      header={
       <header
         data-safe-area-sticky-top
         className="sticky z-30 border-b border-[#23232f] bg-[#0e0e14]/95 backdrop-blur"
@@ -633,9 +635,21 @@ export default function App(){
           </div>
         </div>
       </header>
-
-      <NCTGraphiteGrid columns="repeat(12, 1fr)" gap={0} wideMinWidth={768} wideGap={1} className="flex-1 mx-auto w-full max-w-[1520px] bg-[#23232f] border-x border-[#23232f]">
-        <aside className="col-span-12 md:col-span-3 bg-[#0e0e14] flex flex-col min-h-0">
+      }
+      footer={
+      <footer className="border-t border-[#23232f] bg-[#0e0e14] h-[28px] flex items-center px-4 text-[10px] text-[#5a5860] justify-between">
+        <NCTGraphiteStack direction="row" gap={16}>
+          <span className="hidden md:inline">axial q,r → pixel • distance center test • records.list / create persisted</span>
+          <span className="text-[#7a7680]">{gridType} • {hexSize}px • {activeCount}/{cellsRef.current.length} active • {((activeCount/cellsRef.current.length)*100||0).toFixed(1)}%</span>
+        </NCTGraphiteStack>
+        <NCTGraphiteStack direction="row" gap={12}>
+          <span>JetBrains Mono</span>
+          <span className="px-1.5 py-[1px] rounded bg-[#1a1a24] border border-[#23232f] text-[#7a7680]">PAPER #fdfaf3</span>
+        </NCTGraphiteStack>
+      </footer>
+      }
+    >
+        <aside className="bg-[#0e0e14] flex flex-col min-h-0">
           <div className="p-4 border-b border-[#1a1a24]">
             <div className="text-[11px] tracking-[0.18em] text-[#7a7680] mb-3">CONTROLS / KEY-MAP</div>
             <div className="space-y-[6px]">
@@ -729,7 +743,7 @@ export default function App(){
         </aside>
 
         {/* CENTER CANVAS */}
-        <main className="col-span-12 md:col-span-6 bg-[#0e0e14] flex flex-col min-h-[520px]">
+        <main className="bg-[#0e0e14] flex flex-col min-h-[520px]">
           <div className="h-[38px] px-4 border-b border-[#1a1a24] flex items-center justify-between text-[10px]">
             <div className="flex items-center gap-3">
               <span className="text-[#7a7680] tracking-[0.14em]">CANVAS</span>
@@ -789,7 +803,7 @@ export default function App(){
         </main>
 
         {/* RIGHT PANEL */}
-        <aside className="col-span-12 md:col-span-3 bg-[#0e0e14] flex flex-col">
+        <aside className="bg-[#0e0e14] flex flex-col">
           <div className="p-4 border-b border-[#1a1a24] space-y-4">
             <div className="text-[11px] tracking-[0.18em] text-[#7a7680]">GRID / RENDER</div>
             <div className="space-y-3">
@@ -907,20 +921,8 @@ export default function App(){
             </div>
           </div>
         </aside>
-      </NCTGraphiteGrid>
-
-      <footer className="border-t border-[#23232f] bg-[#0e0e14] h-[28px] flex items-center px-4 text-[10px] text-[#5a5860] justify-between">
-        <NCTGraphiteStack direction="row" gap={16}>
-          <span className="hidden md:inline">axial q,r → pixel • distance center test • records.list / create persisted</span>
-          <span className="text-[#7a7680]">{gridType} • {hexSize}px • {activeCount}/{cellsRef.current.length} active • {((activeCount/cellsRef.current.length)*100||0).toFixed(1)}%</span>
-        </NCTGraphiteStack>
-        <NCTGraphiteStack direction="row" gap={12}>
-          <span>JetBrains Mono</span>
-          <span className="px-1.5 py-[1px] rounded bg-[#1a1a24] border border-[#23232f] text-[#7a7680]">PAPER #fdfaf3</span>
-        </NCTGraphiteStack>
-      </footer>
-
+    </NCTGraphiteAppShell>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap'); *{font-family:"JetBrains Mono", monospace} @keyframes pop{0%{transform:translate(-50%,-6px) scale(0.96)}100%{transform:translate(-50%,0) scale(1)}}`}</style>
-    </div>
+    </>
   );
 }

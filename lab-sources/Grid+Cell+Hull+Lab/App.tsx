@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import {
   NCTGraphiteSlider, NCTGraphiteStack, NCTGraphiteGrid,
-  NCTGraphiteStage, NCTGraphiteStageBody, NCTGraphiteStagePanel, NCTGraphiteStageMain,
+  NCTGraphiteAppShell, NCTGraphiteStagePanel, NCTGraphiteStageMain,
   useNCTGraphiteCommands,
 } from '@nct/nctgraphite';
 import type { NCTGraphiteCommandDef } from '@nct/nctgraphite';
@@ -1112,8 +1112,10 @@ export default function App() {
   const totalPerim = hulls.reduce((s, h) => s + h.perimeter, 0);
 
   return (
-    <NCTGraphiteStage>
-      {/* Header */}
+    <NCTGraphiteAppShell
+      gap={0}
+      proportion="220px 1fr 300px"
+      header={
       <header data-safe-area-sticky-top style={{ top: 'var(--safe-area-inset-top)' }} className="sticky z-20 backdrop-blur bg-[#0e0e14]/90 border-b border-[#1a1a24] px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="w-2 h-2 rounded-full bg-[var(--accent)] animate-pulse" />
@@ -1126,8 +1128,14 @@ export default function App() {
           <span className="px-2 py-1 bg-[var(--accent)] text-black rounded font-bold">{activeCount} CELLS</span>
         </div>
       </header>
-
-      <NCTGraphiteStageBody>
+      }
+      footer={
+      <footer className="border-t border-[#1a1a24] bg-[#0e0e14] px-4 py-2 text-[10px] tracking-widest text-[#9a958c] flex justify-between">
+        <span>GRID CELL HULL LAB • DARK PANELS #0e0e14 #1a1a24 • ACCENT #c2a878 #7c5cff • MONO JetBrains Mono • 60FPS SPATIAL HASH</span>
+        <span className="hidden md:inline">SQUARE = ORTHO TECHNICAL • HEX FLAT = HONEYCOMB ORGANIC • TRIANGLE = 60° DYNAMIC</span>
+      </footer>
+      }
+    >
         {/* Left panel */}
         <NCTGraphiteStagePanel side="left" width={220} className="bg-[#0e0e14] border-r border-[#1a1a24] p-4 flex flex-col gap-4 shrink-0">
           <div>
@@ -1301,12 +1309,6 @@ export default function App() {
             <span className="text-[#fdfaf3]">Hull:</span> Group active via flood fill (BFS through edge-adjacent neighbors). Collect perimeter edges where neighbor not active. Link edges into closed loops via point map + min-turn. Tight = direct polyline. Smooth = arcTo with radius cellSize*smoothRadius. Convex = monotone chain. Concave = same as tight (follows indentations).
           </div>
         </NCTGraphiteStagePanel>
-      </NCTGraphiteStageBody>
-
-      <footer className="border-t border-[#1a1a24] bg-[#0e0e14] px-4 py-2 text-[10px] tracking-widest text-[#9a958c] flex justify-between">
-        <span>GRID CELL HULL LAB • DARK PANELS #0e0e14 #1a1a24 • ACCENT #c2a878 #7c5cff • MONO JetBrains Mono • 60FPS SPATIAL HASH</span>
-        <span className="hidden md:inline">SQUARE = ORTHO TECHNICAL • HEX FLAT = HONEYCOMB ORGANIC • TRIANGLE = 60° DYNAMIC</span>
-      </footer>
-    </NCTGraphiteStage>
+    </NCTGraphiteAppShell>
   );
 }
