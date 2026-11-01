@@ -9,12 +9,14 @@ import type { NCTGraphiteCommandDef } from '@nct/nctgraphite';
 const HULL_COMMANDS: NCTGraphiteCommandDef[] = [
   { id: "paint", label: "Activate cells", desc: "Hold F and move over grid", defaultKey: "f" },
   { id: "erase", label: "Erase cells", desc: "Hold E and move over grid", defaultKey: "e" },
+  { id: "subdivide", label: "Subdivide cells", desc: "Hold D to split cells under the brush", defaultKey: "d" },
+  { id: "coarsen", label: "Reduce subdivision", desc: "Hold S to merge cells under the brush", defaultKey: "s" },
   { id: "smooth", label: "Smooth gaps", desc: "Average with neighbors", defaultKey: "q" },
   { id: "compute", label: "Regen Hull", desc: "Recompute hulls now", defaultKey: "v" },
   { id: "clear", label: "Clear / Invert", desc: "Clear, Shift+X inverts", defaultKey: "x" },
   { id: "newColor", label: "New Color Group", desc: "Cycle palette", defaultKey: "c" },
   { id: "showGrid", label: "Show Grid", desc: "Toggle grid lines", defaultKey: "m" },
-  { id: "fillHull", label: "Fill Hull", desc: "Toggle hull fill", defaultKey: "l" },
+  { id: "fillHull", label: "Shape Fill", desc: "Toggle the active shape color fill", defaultKey: "l" },
   { id: "brushCycle", label: "Brush Circle/Square/Tri", desc: "Cycle brush shape", defaultKey: "b" },
   { id: "rotateCcw", label: "Rotate brush −15°", desc: "Rotate brush counterclockwise", defaultKey: ";" },
   { id: "rotateCw", label: "Rotate brush +15°", desc: "Rotate brush clockwise", defaultKey: "'" },
@@ -43,7 +45,11 @@ type Cell = {
   row: number;
   corners: Vec[];
   edges: Edge[];
+  parentId: number | null;
+  rootId: number;
+  level: number;
 };
+type ParentRecord = { parent: Cell; childIds: number[] };
 
 type Hull = {
   id: string;
@@ -58,6 +64,8 @@ type Hull = {
 type GridType = 'square' | 'hexHoriz' | 'hexVert' | 'triHoriz' | 'triVert';
 type HullMode = 'tight' | 'smooth' | 'convex' | 'concave';
 type BrushShape = 'circle' | 'square' | 'triangle';
+type SubdivideTarget = 'shape' | 'grid';
+const PAINT_ACTIVATION_THRESHOLD = 0.75;
 
 const GRID_TYPES: GridType[] = ['square', 'hexHoriz', 'hexVert', 'triHoriz', 'triVert'];
 const GRID_LABELS: Record<GridType, string> = {
@@ -77,6 +85,32 @@ const GRID_ALIASES: Record<string, GridType> = {
   triHoriz: 'triHoriz',
   triVert: 'triVert',
 };
+
+const svgIcon = (inner: string) => (
+  <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" dangerouslySetInnerHTML={{ __html: inner }} />
+);
+const ICONS: Record<string, React.ReactNode> = {
+  circle: svgIcon('<circle cx="8" cy="8" r="5.2"/>'),
+  square: svgIcon('<rect x="3" y="3" width="10" height="10"/>'),
+  triangle: svgIcon('<path d="M8 2.8L13.6 13H2.4Z"/>'),
+  rotateCcw: svgIcon('<polyline points="0.7,2.7 0.7,6.7 4.7,6.7"/><path d="M2.3 10a6 6 0 1 0 1.4-6.2L0.7 6.7"/>'),
+  rotateCw: svgIcon('<polyline points="15.3,2.7 15.3,6.7 11.3,6.7"/><path d="M13.7 10a6 6 0 1 1-1.4-6.2l2 2.9"/>'),
+  gridSquare: svgIcon('<rect x="2.5" y="2.5" width="5" height="5"/><rect x="8.5" y="2.5" width="5" height="5"/><rect x="2.5" y="8.5" width="5" height="5"/><rect x="8.5" y="8.5" width="5" height="5"/>'),
+  hex: svgIcon('<polygon points="8,1.8 13.4,4.9 13.4,11.1 8,14.2 2.6,11.1 2.6,4.9"/>'),
+  targetShape: svgIcon('<polygon points="8,2 13,6 11,13.5 5,13.5 3,6"/>'),
+  hullTight: svgIcon('<polygon points="2.5,6.5 5,3.5 9.5,4.5 13.5,6 12,10.5 13,13.5 8.5,13 4,13.5 2.5,10"/>'),
+  hullConvex: svgIcon('<polygon points="8,2 14,8 8,14 2,8"/>'),
+  hullConcave: svgIcon('<polygon points="3,2.5 8,5.5 13,2.5 13,13.5 8,10.5 3,13.5"/>'),
+  fillGaps: svgIcon('<rect x="2.5" y="2.5" width="11" height="11"/><path d="M8 5.5v5M5.5 8h5"/>'),
+  removeIsolated: svgIcon('<circle cx="8" cy="8" r="5.5"/><path d="M5.3 8h5.4"/>'),
+  regenerate: svgIcon('<path d="M13.2 8a5.2 5.2 0 1 1-1.5-3.7"/><path d="M13.4 1.8v2.7h-2.7"/>'),
+  shirt: svgIcon('<path d="M6 2.5L3 4.3 1.6 6.8l1.9 1 1-1.3v6.9h7V6.5l1 1.3 1.9-1-1.4-2.5L10 2.5H9v1.6H7V2.5Z"/>'),
+  download: svgIcon('<path d="M8 2v8M4.8 7.2L8 10.4l3.2-3.2"/><path d="M3 12.5h10"/>'),
+  image: svgIcon('<rect x="2" y="3.5" width="12" height="9.5" rx="1"/><circle cx="5.6" cy="7" r="1.2"/><path d="M2.5 11.5l3-3 2.4 2.4 2-2 3.6 3.6"/>'),
+};
+const BRUSH_ICONS: Record<BrushShape, React.ReactNode> = { circle: ICONS.circle, square: ICONS.square, triangle: ICONS.triangle };
+const GRID_ICONS: Record<GridType, React.ReactNode> = { square: ICONS.gridSquare, hexHoriz: ICONS.hex, hexVert: ICONS.hex, triHoriz: ICONS.triangle, triVert: ICONS.triangle };
+const HULL_ICONS: Record<HullMode, React.ReactNode> = { tight: ICONS.hullTight, smooth: ICONS.circle, convex: ICONS.hullConvex, concave: ICONS.hullConcave };
 
 // Helpers
 const quant = (n: number) => Math.round(n * 100);
@@ -217,7 +251,8 @@ function genSquare(width: number, height: number, cellSize: number, jitter: numb
         { x1: bl.x, y1: bl.y, x2: tl.x, y2: tl.y },
       ];
       const edges = raw.map((e) => ({ ...e, key: edgeKey(e.x1, e.y1, e.x2, e.y2) }));
-      cells.push({ id: id++, cx, cy, col: c, row: r, corners, edges });
+      cells.push({ id, cx, cy, col: c, row: r, corners, edges, parentId: null, rootId: id, level: 0 });
+      id++;
     }
   }
   return cells;
@@ -256,7 +291,8 @@ function genHexFlat(width: number, height: number, size: number, jitter: number)
         raw.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y });
       }
       const edges = raw.map((e) => ({ ...e, key: edgeKey(e.x1, e.y1, e.x2, e.y2) }));
-      cells.push({ id: id++, cx, cy, col: c, row: r, corners, edges });
+      cells.push({ id, cx, cy, col: c, row: r, corners, edges, parentId: null, rootId: id, level: 0 });
+      id++;
     }
   }
   return cells;
@@ -295,7 +331,8 @@ function genHexPointy(width: number, height: number, size: number, jitter: numbe
         raw.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y });
       }
       const edges = raw.map((e) => ({ ...e, key: edgeKey(e.x1, e.y1, e.x2, e.y2) }));
-      cells.push({ id: id++, cx, cy, col: c, row: r, corners, edges });
+      cells.push({ id, cx, cy, col: c, row: r, corners, edges, parentId: null, rootId: id, level: 0 });
+      id++;
     }
   }
   return cells;
@@ -339,7 +376,8 @@ function genTriangle(width: number, height: number, triSize: number, jitter: num
           { x1: p3.x, y1: p3.y, x2: p0.x, y2: p0.y },
         ];
         const edges = raw.map((e) => ({ ...e, key: edgeKey(e.x1, e.y1, e.x2, e.y2) }));
-        cells.push({ id: id++, cx: t1Cx, cy: t1Cy, col: c, row: r, corners: t1Corners, edges });
+        cells.push({ id, cx: t1Cx, cy: t1Cy, col: c, row: r, corners: t1Corners, edges, parentId: null, rootId: id, level: 0 });
+        id++;
       }
       const t2Corners = [p1, p2, p3];
       const t2Cx = (p1.x + p2.x + p3.x) / 3;
@@ -351,11 +389,224 @@ function genTriangle(width: number, height: number, triSize: number, jitter: num
           { x1: p3.x, y1: p3.y, x2: p1.x, y2: p1.y },
         ];
         const edges = raw.map((e) => ({ ...e, key: edgeKey(e.x1, e.y1, e.x2, e.y2) }));
-        cells.push({ id: id++, cx: t2Cx, cy: t2Cy, col: c, row: r, corners: t2Corners, edges });
+        cells.push({ id, cx: t2Cx, cy: t2Cy, col: c, row: r, corners: t2Corners, edges, parentId: null, rootId: id, level: 0 });
+        id++;
       }
     }
   }
   return cells;
+}
+
+function edgesFromCorners(corners: Vec[]): Edge[] {
+  return corners.map((p, i) => {
+    const q = corners[(i + 1) % corners.length];
+    return { x1: p.x, y1: p.y, x2: q.x, y2: q.y, key: edgeKey(p.x, p.y, q.x, q.y) };
+  });
+}
+
+function centroidOf(corners: Vec[]): Vec {
+  let cx = 0, cy = 0;
+  for (const p of corners) { cx += p.x; cy += p.y; }
+  const n = corners.length || 1;
+  return { x: cx / n, y: cy / n };
+}
+
+function makeChildCell(id: number, parent: Cell, corners: Vec[]): Cell {
+  const c = centroidOf(corners);
+  return {
+    id,
+    cx: c.x,
+    cy: c.y,
+    col: parent.col,
+    row: parent.row,
+    corners,
+    edges: edgesFromCorners(corners),
+    parentId: parent.id,
+    rootId: parent.rootId,
+    level: parent.level + 1,
+  };
+}
+
+function subdivideCell(cell: Cell, allocId: () => number): Cell[] {
+  const p = cell.corners;
+  const mid = (i: number) => {
+    const a = p[i], b = p[(i + 1) % p.length];
+    return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  };
+  const child = (corners: Vec[]) => makeChildCell(allocId(), cell, corners);
+  if (p.length === 3) {
+    const m0 = mid(0), m1 = mid(1), m2 = mid(2);
+    return [
+      child([p[0], m0, m2]),
+      child([p[1], m1, m0]),
+      child([p[2], m2, m1]),
+      child([m0, m1, m2]),
+    ];
+  }
+  if (p.length === 4) {
+    const m0 = mid(0), m1 = mid(1), m2 = mid(2), m3 = mid(3);
+    const center = { x: cell.cx, y: cell.cy };
+    return [
+      child([p[0], m0, center, m3]),
+      child([p[1], m1, center, m0]),
+      child([p[2], m2, center, m1]),
+      child([p[3], m3, center, m2]),
+    ];
+  }
+  const center = { x: cell.cx, y: cell.cy };
+  return p.map((_, i) => child([center, p[i], p[(i + 1) % p.length]]));
+}
+
+function pointOnSegment(p: Vec, a: Vec, b: Vec, eps = 0.6): boolean {
+  const ab = Math.hypot(b.x - a.x, b.y - a.y);
+  if (ab < eps) return false;
+  const ap = Math.hypot(p.x - a.x, p.y - a.y);
+  const pb = Math.hypot(b.x - p.x, b.y - p.y);
+  if (ap < eps || pb < eps) return false;
+  return Math.abs(ap + pb - ab) < eps;
+}
+
+function resolveTJunctions(cells: Cell[]): Cell[] {
+  let minL = Infinity, maxL = -Infinity;
+  for (const cell of cells) {
+    if (cell.level < minL) minL = cell.level;
+    if (cell.level > maxL) maxL = cell.level;
+  }
+  if (!(maxL > minL)) return cells;
+
+  // Subdivision creates T-junctions where a fine cell meets a coarse one.
+  // The former implementation checked every vertex against every edge,
+  // which becomes quadratic and made a 2–4 level brush stroke sluggish.
+  // Index edge bounding boxes into a small spatial hash instead: a vertex
+  // only needs to test edges that occupy its local bucket.
+  const bucketSize = 16;
+  type IndexedEdge = { cellIndex: number; edgeIndex: number; a: Vec; b: Vec };
+  const edgeBuckets = new Map<string, IndexedEdge[]>();
+  const bucketKey = (x: number, y: number) => `${x}:${y}`;
+  const addToBucket = (x: number, y: number, edge: IndexedEdge) => {
+    const key = bucketKey(x, y);
+    const edges = edgeBuckets.get(key);
+    if (edges) edges.push(edge);
+    else edgeBuckets.set(key, [edge]);
+  };
+  for (let cellIndex = 0; cellIndex < cells.length; cellIndex++) {
+    const corners = cells[cellIndex].corners;
+    for (let edgeIndex = 0; edgeIndex < corners.length; edgeIndex++) {
+      const a = corners[edgeIndex];
+      const b = corners[(edgeIndex + 1) % corners.length];
+      const edge = { cellIndex, edgeIndex, a, b };
+      const minX = Math.floor(Math.min(a.x, b.x) / bucketSize);
+      const maxX = Math.floor(Math.max(a.x, b.x) / bucketSize);
+      const minY = Math.floor(Math.min(a.y, b.y) / bucketSize);
+      const maxY = Math.floor(Math.max(a.y, b.y) / bucketSize);
+      for (let bx = minX; bx <= maxX; bx++) {
+        for (let by = minY; by <= maxY; by++) addToBucket(bx, by, edge);
+      }
+    }
+  }
+
+  const verts: Vec[] = [];
+  const seen = new Set<string>();
+  for (const cell of cells) {
+    for (const p of cell.corners) {
+      const k = pointKey(p.x, p.y);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      verts.push(p);
+    }
+  }
+  const splitPoints = new Map<string, Vec[]>();
+  for (const p of verts) {
+    const px = Math.floor(p.x / bucketSize);
+    const py = Math.floor(p.y / bucketSize);
+    const candidates = edgeBuckets.get(bucketKey(px, py)) || [];
+    for (const edge of candidates) {
+      if (!pointOnSegment(p, edge.a, edge.b)) continue;
+      const key = `${edge.cellIndex}:${edge.edgeIndex}`;
+      const points = splitPoints.get(key);
+      if (points) points.push(p);
+      else splitPoints.set(key, [p]);
+    }
+  }
+
+  return cells.map((cell, cellIndex) => {
+    const corners: Vec[] = [];
+    for (let i = 0; i < cell.corners.length; i++) {
+      const a = cell.corners[i];
+      corners.push(a);
+      const extra = splitPoints.get(`${cellIndex}:${i}`);
+      if (extra) extra.sort((p, q) => Math.hypot(p.x - a.x, p.y - a.y) - Math.hypot(q.x - a.x, q.y - a.y));
+      if (extra) for (const p of extra) corners.push(p);
+    }
+    if (corners.length === cell.corners.length) return cell;
+    return { ...cell, corners, edges: edgesFromCorners(corners) };
+  });
+}
+
+function applySubdivide(
+  mesh: Cell[],
+  active: Set<number>,
+  parents: Map<number, ParentRecord>,
+  allocId: () => number,
+  maxLevel: number,
+  hit: (cell: Cell) => boolean
+): { mesh: Cell[]; active: Set<number> } | null {
+  if (maxLevel <= 0) return null;
+  const candidates = mesh.filter((cell) => cell.level < maxLevel && hit(cell));
+  if (candidates.length === 0) return null;
+  const minLevel = Math.min(...candidates.map((cell) => cell.level));
+  const splitIds = new Set(candidates.filter((cell) => cell.level === minLevel).map((cell) => cell.id));
+  const next: Cell[] = [];
+  const nextActive = new Set(active);
+  for (const cell of mesh) {
+    if (splitIds.has(cell.id)) {
+      const kids = subdivideCell(cell, allocId);
+      parents.set(cell.id, { parent: cell, childIds: kids.map((k) => k.id) });
+      if (nextActive.has(cell.id)) {
+        nextActive.delete(cell.id);
+        for (const k of kids) nextActive.add(k.id);
+      }
+      next.push(...kids);
+    } else {
+      next.push(cell);
+    }
+  }
+  return { mesh: next, active: nextActive };
+}
+
+function applyCoarsen(
+  mesh: Cell[],
+  active: Set<number>,
+  parents: Map<number, ParentRecord>,
+  hit: (cell: Cell) => boolean
+): { mesh: Cell[]; active: Set<number> } | null {
+  const hitCells = mesh.filter(hit);
+  if (hitCells.length === 0) return null;
+  const maxLevel = Math.max(...hitCells.map((c) => c.level));
+  if (maxLevel <= 0) return null;
+  const live = new Set(mesh.map((c) => c.id));
+  const parentIds = new Set<number>();
+  for (const cell of hitCells) {
+    if (cell.level === maxLevel && cell.parentId != null) parentIds.add(cell.parentId);
+  }
+  const remove = new Set<number>();
+  const restored: Cell[] = [];
+  const nextActive = new Set(active);
+  for (const pid of parentIds) {
+    const rec = parents.get(pid);
+    if (!rec) continue;
+    if (!rec.childIds.every((id) => live.has(id))) continue;
+    const anyActive = rec.childIds.some((id) => nextActive.has(id));
+    for (const id of rec.childIds) {
+      remove.add(id);
+      nextActive.delete(id);
+    }
+    restored.push(rec.parent);
+    if (anyActive) nextActive.add(pid);
+    parents.delete(pid);
+  }
+  if (remove.size === 0) return null;
+  return { mesh: mesh.filter((c) => !remove.has(c.id)).concat(restored), active: nextActive };
 }
 
 // Hull computation
@@ -642,7 +893,13 @@ export default function App() {
   // Grid settings
   const [gridType, setGridType] = useState<GridType>('square');
   const [cellSize, setCellSize] = useState(14);
+  const [subdivide, setSubdivide] = useState(2);
+  const [subdivideTarget, setSubdivideTarget] = useState<SubdivideTarget>('shape');
+  const [falloffPower, setFalloffPower] = useState(1);
+  const [paintFalloff, setPaintFalloff] = useState(true);
+  const [subdivideFalloff, setSubdivideFalloff] = useState(true);
   const [jitter, setJitter] = useState(0);
+  const [snapToGrid, setSnapToGrid] = useState(true);
   const [brushRadius, setBrushRadius] = useState(64);
   const [brushShape, setBrushShape] = useState<BrushShape>('circle');
   const [brushAngle, setBrushAngle] = useState(0);
@@ -650,7 +907,10 @@ export default function App() {
   const [smoothRadius, setSmoothRadius] = useState(0.22);
   const [showGrid, setShowGrid] = useState(true);
   const [showCenters, setShowCenters] = useState(false);
-  const [fillHull, setFillHull] = useState(true);
+  const [showShapeFill, setShowShapeFill] = useState(true);
+  const [showShapeOutline, setShowShapeOutline] = useState(true);
+  const [showDivisions, setShowDivisions] = useState(false);
+  const [showSubdivisions, setShowSubdivisions] = useState(true);
   const [fillOpacity, setFillOpacity] = useState(0.18);
   const [strokeWidth, setStrokeWidth] = useState(2.5);
   const [colorByCluster, setColorByCluster] = useState(true);
@@ -663,8 +923,12 @@ export default function App() {
   const [isMouseDown, setIsMouseDown] = useState(false);
   const [brushMode, setBrushModeState] = useState<'activate' | 'erase'>('activate');
   const pendingActiveRef = useRef<number[] | null>(null);
+  const parentsRef = useRef(new Map<number, ParentRecord>());
+  const nextIdRef = useRef(0);
+  const paintStrengthRef = useRef(new Map<number, number>());
   const loadGridType = (next: GridType) => {
     pendingActiveRef.current = null;
+    paintStrengthRef.current.clear();
     setActiveIds(new Set());
     setGridType(next);
   };
@@ -674,9 +938,12 @@ export default function App() {
     onAction: (id, e) => {
       if (id === "paint") { setBrushModeState('activate'); if (mousePos) paintAt(mousePos.x, mousePos.y, 'activate'); }
       if (id === "erase") { setBrushModeState('erase'); if (mousePos) paintAt(mousePos.x, mousePos.y, 'erase'); }
+      if (id === "subdivide") { if (e?.repeat) return; if (mousePos) subdivideAt(mousePos.x, mousePos.y); }
+      if (id === "coarsen") { if (e?.repeat) return; if (mousePos) coarsenAt(mousePos.x, mousePos.y); }
       if (id === "smooth") doSmoothGaps();
       if (id === "compute") computeNow();
       if (id === "clear") {
+        paintStrengthRef.current.clear();
         if (e?.shiftKey) {
           const all = cells.map((c) => c.id);
           setActiveIds((prev) => {
@@ -688,7 +955,7 @@ export default function App() {
       }
       if (id === "newColor") setPaletteIdx((i) => (i + 1) % 5);
       if (id === "showGrid") setShowGrid((v) => !v);
-      if (id === "fillHull") setFillHull((v) => !v);
+      if (id === "fillHull") setShowShapeFill((v) => !v);
       if (id === "brushCycle") setBrushShape((s) => (s === 'circle' ? 'square' : s === 'square' ? 'triangle' : 'circle'));
       if (id === "rotateCcw") setBrushAngle((a) => (a + 345) % 360);
       if (id === "rotateCw") setBrushAngle((a) => (a + 15) % 360);
@@ -707,6 +974,8 @@ export default function App() {
   });
   const isFPressed = hullHeld.has("paint");
   const isEPressed = hullHeld.has("erase");
+  const isDPressed = hullHeld.has("subdivide");
+  const isSPressed = hullHeld.has("coarsen");
   const [hulls, setHulls] = useState<Hull[]>([]);
   const [showShirt, setShowShirt] = useState(false);
   const [paletteIdx, setPaletteIdx] = useState(0);
@@ -816,28 +1085,56 @@ export default function App() {
   };
 
   // Grid data
-  const gridData = useMemo(() => {
-    let cells: Cell[] = [];
-    if (gridType === 'square') cells = genSquare(WIDTH, HEIGHT, cellSize, jitter);
-    else if (gridType === 'hexHoriz') cells = genHexFlat(WIDTH, HEIGHT, cellSize, jitter);
-    else if (gridType === 'hexVert') cells = genHexPointy(WIDTH, HEIGHT, cellSize, jitter);
-    else if (gridType === 'triVert') cells = genTriangle(WIDTH, HEIGHT, cellSize, jitter, true);
-    else cells = genTriangle(WIDTH, HEIGHT, cellSize, jitter);
-    const { edgeMap, adjacency } = buildTopology(cells);
-    return { cells, edgeMap, adjacency, cols: 0, rows: 0 };
+  const baseCells = useMemo(() => {
+    if (gridType === 'square') return genSquare(WIDTH, HEIGHT, cellSize, jitter);
+    if (gridType === 'hexHoriz') return genHexFlat(WIDTH, HEIGHT, cellSize, jitter);
+    if (gridType === 'hexVert') return genHexPointy(WIDTH, HEIGHT, cellSize, jitter);
+    if (gridType === 'triVert') return genTriangle(WIDTH, HEIGHT, cellSize, jitter, true);
+    return genTriangle(WIDTH, HEIGHT, cellSize, jitter);
   }, [gridType, cellSize, jitter]);
 
-  const { cells, edgeMap, adjacency } = gridData;
+  const [meshCells, setMeshCells] = useState<Cell[]>(baseCells);
+  const meshCellsRef = useRef(meshCells);
+  meshCellsRef.current = meshCells;
+  const activeIdsRef = useRef(activeIds);
+  activeIdsRef.current = activeIds;
 
-  // A newly loaded grid mode starts empty. Saved sessions restore after the type switch.
   useEffect(() => {
+    parentsRef.current = new Map();
+    paintStrengthRef.current.clear();
+    nextIdRef.current = baseCells.reduce((m, c) => Math.max(m, c.id + 1), 0);
+    setMeshCells(baseCells);
+    meshCellsRef.current = baseCells;
     if (pendingActiveRef.current) {
       setActiveIds(new Set(pendingActiveRef.current));
       pendingActiveRef.current = null;
       return;
     }
     setActiveIds(new Set());
-  }, [gridType]);
+  }, [baseCells]);
+
+  const gridData = useMemo(() => {
+    const cells = resolveTJunctions(meshCells);
+    const { edgeMap, adjacency } = buildTopology(cells);
+    return { cells, edgeMap, adjacency };
+  }, [meshCells]);
+
+  const { cells, edgeMap, adjacency } = gridData;
+  const snapBrushPosition = useCallback((point: Vec): Vec => {
+    if (!snapToGrid || baseCells.length === 0) return point;
+    let nearest = baseCells[0];
+    let nearestDistance = Infinity;
+    for (const cell of baseCells) {
+      const dx = cell.cx - point.x;
+      const dy = cell.cy - point.y;
+      const distance = dx * dx + dy * dy;
+      if (distance < nearestDistance) {
+        nearest = cell;
+        nearestDistance = distance;
+      }
+    }
+    return { x: nearest.cx, y: nearest.cy };
+  }, [baseCells, snapToGrid]);
 
   // Hull computation
   const computeNow = useCallback(() => {
@@ -877,6 +1174,8 @@ export default function App() {
     }
     return inside;
   };
+  const brushInfluence = (x: number, y: number, cx: number, cy: number): number =>
+    Math.max(0, 1 - Math.hypot(cx - x, cy - y) / brushRadius);
   const traceBrush = (ctx: CanvasRenderingContext2D, x: number, y: number) => {
     if (brushShape === 'circle') {
       ctx.beginPath();
@@ -913,13 +1212,13 @@ export default function App() {
       ctx.strokeStyle = '#e8e0c8';
       ctx.lineWidth = 0.5;
       ctx.globalAlpha = 0.55;
+      ctx.beginPath();
       for (const cell of cells) {
-        ctx.beginPath();
         ctx.moveTo(cell.corners[0].x, cell.corners[0].y);
         for (let i = 1; i < cell.corners.length; i++) ctx.lineTo(cell.corners[i].x, cell.corners[i].y);
         ctx.closePath();
-        ctx.stroke();
       }
+      ctx.stroke();
       ctx.globalAlpha = 1;
     }
 
@@ -942,31 +1241,74 @@ export default function App() {
 
     const palette = ['#c2a878', '#7c5cff', '#ff7a5c', '#4ecdc4', '#e84855'];
     const shiftedPalette = [...palette.slice(paletteIdx), ...palette.slice(0, paletteIdx)];
+    const cellById = new Map(cells.map((cell) => [cell.id, cell]));
 
     // active cells
+    if (showShapeFill) {
+      for (const cell of cells) {
+        if (!activeIds.has(cell.id)) continue;
+        const cIdx = cellToCluster.get(cell.id) ?? 0;
+        const col = colorByCluster ? shiftedPalette[cIdx % shiftedPalette.length] : shiftedPalette[0];
+        ctx.fillStyle = col;
+        ctx.globalAlpha = 0.86;
+        ctx.beginPath();
+        ctx.moveTo(cell.corners[0].x, cell.corners[0].y);
+        for (let i = 1; i < cell.corners.length; i++) ctx.lineTo(cell.corners[i].x, cell.corners[i].y);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+    ctx.globalAlpha = 1;
+
+    // These are drawn directly from the active mesh, so line-only display is
+    // immediate and does not wait for the debounced hull calculation.
+    const boundarySegments: Edge[] = [];
+    const divisionSegments: Edge[] = [];
+    const subdivisionSegments: Edge[] = [];
+    const seenInternalEdges = new Set<string>();
     for (const cell of cells) {
       if (!activeIds.has(cell.id)) continue;
-      const cIdx = cellToCluster.get(cell.id) ?? 0;
-      const col = colorByCluster ? shiftedPalette[cIdx % shiftedPalette.length] : shiftedPalette[0];
-      ctx.fillStyle = col;
-      ctx.globalAlpha = 0.86;
-      ctx.beginPath();
-      ctx.moveTo(cell.corners[0].x, cell.corners[0].y);
-      for (let i = 1; i < cell.corners.length; i++) ctx.lineTo(cell.corners[i].x, cell.corners[i].y);
-      ctx.closePath();
-      ctx.fill();
-      ctx.globalAlpha = 1;
-      ctx.strokeStyle = '#1a1a24';
-      ctx.lineWidth = 0.5;
-      ctx.stroke();
+      for (const edge of cell.edges) {
+        const entry = edgeMap.get(edge.key);
+        const activeNeighbors = entry?.cellIds.filter((id) => id !== cell.id && activeIds.has(id)) || [];
+        if (activeNeighbors.length === 0) {
+          boundarySegments.push(edge);
+          continue;
+        }
+        if (seenInternalEdges.has(edge.key)) continue;
+        seenInternalEdges.add(edge.key);
+        const crossesBaseCell = activeNeighbors.some((id) => cellById.get(id)?.rootId !== cell.rootId);
+        if (crossesBaseCell) divisionSegments.push(edge);
+        else subdivisionSegments.push(edge);
+      }
     }
+    const strokeSegments = (segments: Edge[], width: number, alpha = 1) => {
+      if (segments.length === 0) return;
+      ctx.globalAlpha = alpha;
+      ctx.beginPath();
+      for (const edge of segments) {
+        ctx.moveTo(edge.x1, edge.y1);
+        ctx.lineTo(edge.x2, edge.y2);
+      }
+      ctx.lineWidth = width;
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    };
+    ctx.strokeStyle = '#1a1a24';
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    if (showShapeOutline) strokeSegments(boundarySegments, strokeWidth);
+    if (showDivisions) strokeSegments(divisionSegments, Math.max(0.75, strokeWidth * 0.45), 0.78);
+    if (showSubdivisions) strokeSegments(subdivisionSegments, Math.max(0.6, strokeWidth * 0.32), 0.68);
+    ctx.lineJoin = 'miter';
+    ctx.lineCap = 'butt';
 
     // hulls
     for (const hull of hulls) {
       if (hull.points.length < 3) continue;
       const cIdx = hull.clusterId;
       const col = colorByCluster ? shiftedPalette[cIdx % shiftedPalette.length] : '#1a1a24';
-      if (fillHull && !hull.isHole) {
+      if (showShapeFill && !hull.isHole) {
         ctx.fillStyle = colorByCluster ? col + '33' : `rgba(26,26,36,${fillOpacity})`;
         ctx.globalAlpha = 1;
         if (hullMode === 'smooth') {
@@ -980,20 +1322,22 @@ export default function App() {
           ctx.fill();
         }
       }
-      ctx.strokeStyle = hull.isHole ? '#e84855' : col;
-      if (!colorByCluster) ctx.strokeStyle = '#1a1a24';
-      ctx.lineWidth = strokeWidth;
-      if (hullMode === 'convex') ctx.setLineDash([8, 6]);
-      else ctx.setLineDash([]);
-      if (hullMode === 'smooth') {
-        drawSmoothPath(ctx, hull.points, cellSize * smoothRadius);
-        ctx.stroke();
-      } else {
-        ctx.beginPath();
-        ctx.moveTo(hull.points[0].x, hull.points[0].y);
-        for (let i = 1; i < hull.points.length; i++) ctx.lineTo(hull.points[i].x, hull.points[i].y);
-        ctx.closePath();
-        ctx.stroke();
+      if (showShapeOutline) {
+        ctx.strokeStyle = hull.isHole ? '#e84855' : col;
+        if (!colorByCluster) ctx.strokeStyle = '#1a1a24';
+        ctx.lineWidth = strokeWidth;
+        if (hullMode === 'convex') ctx.setLineDash([8, 6]);
+        else ctx.setLineDash([]);
+        if (hullMode === 'smooth') {
+          drawSmoothPath(ctx, hull.points, cellSize * smoothRadius);
+          ctx.stroke();
+        } else {
+          ctx.beginPath();
+          ctx.moveTo(hull.points[0].x, hull.points[0].y);
+          for (let i = 1; i < hull.points.length; i++) ctx.lineTo(hull.points[i].x, hull.points[i].y);
+          ctx.closePath();
+          ctx.stroke();
+        }
       }
       ctx.setLineDash([]);
     }
@@ -1008,49 +1352,101 @@ export default function App() {
     }
 
     if (mousePos) {
-      ctx.strokeStyle = brushMode === 'activate' ? '#7c5cff' : '#e84855';
+      ctx.strokeStyle = isDPressed ? '#c2a878' : isSPressed ? '#ff7a5c' : brushMode === 'activate' ? '#7c5cff' : '#e84855';
       ctx.lineWidth = 1;
       ctx.setLineDash([4, 4]);
       traceBrush(ctx, mousePos.x, mousePos.y);
       ctx.stroke();
       ctx.setLineDash([]);
-      // preview cells whose state the brush would change
-      ctx.fillStyle = brushMode === 'activate' ? '#7c5cff' : '#e84855';
+      ctx.fillStyle = isDPressed ? '#c2a878' : isSPressed ? '#ff7a5c' : brushMode === 'activate' ? '#7c5cff' : '#e84855';
       ctx.globalAlpha = 0.35;
-      for (const cell of cells) {
-        const wouldChange = brushMode === 'activate' ? !activeIds.has(cell.id) : activeIds.has(cell.id);
-        if (wouldChange && brushHits(mousePos.x, mousePos.y, cell.cx, cell.cy)) {
-          ctx.beginPath();
-          ctx.moveTo(cell.corners[0].x, cell.corners[0].y);
-          for (let i = 1; i < cell.corners.length; i++) ctx.lineTo(cell.corners[i].x, cell.corners[i].y);
-          ctx.closePath();
-          ctx.fill();
-          ctx.lineWidth = 0.5;
-          ctx.strokeStyle = '#1a1a24';
-          ctx.stroke();
-        }
+      for (const cell of meshCells) {
+        if (!brushHits(mousePos.x, mousePos.y, cell.cx, cell.cy)) continue;
+        const wouldChange = isDPressed
+          ? cell.level < subdivide &&
+            (subdivideTarget === 'grid' || activeIds.has(cell.id)) &&
+            (!subdivideFalloff || cell.level < Math.ceil(subdivide * Math.pow(brushInfluence(mousePos.x, mousePos.y, cell.cx, cell.cy), falloffPower)))
+          : isSPressed
+            ? cell.level > 0 && (subdivideTarget === 'grid' || activeIds.has(cell.id))
+            : brushMode === 'activate' ? !activeIds.has(cell.id) : activeIds.has(cell.id);
+        if (!wouldChange) continue;
+        ctx.beginPath();
+        ctx.moveTo(cell.corners[0].x, cell.corners[0].y);
+        for (let i = 1; i < cell.corners.length; i++) ctx.lineTo(cell.corners[i].x, cell.corners[i].y);
+        ctx.closePath();
+        ctx.fill();
+        ctx.lineWidth = 0.5;
+        ctx.strokeStyle = '#1a1a24';
+        ctx.stroke();
       }
       ctx.globalAlpha = 1;
     }
-  }, [cells, activeIds, hulls, showGrid, showCenters, mousePos, brushRadius, brushShape, brushAngle, brushMode, colorByCluster, fillHull, fillOpacity, strokeWidth, hullMode, smoothRadius, cellSize, adjacency, paletteIdx]);
+  }, [cells, meshCells, activeIds, hulls, showGrid, showCenters, showShapeFill, showShapeOutline, showDivisions, showSubdivisions, mousePos, brushRadius, brushShape, brushAngle, brushMode, colorByCluster, fillOpacity, strokeWidth, hullMode, smoothRadius, cellSize, adjacency, edgeMap, paletteIdx, isDPressed, isSPressed, subdivide, subdivideTarget, subdivideFalloff, falloffPower]);
 
   // Interaction helpers
   const paintAt = useCallback((x: number, y: number, mode: 'activate' | 'erase') => {
     setActiveIds((prev) => {
       const next = new Set(prev);
       let changed = false;
-      for (const cell of cells) {
+      for (const cell of meshCells) {
         if (brushHits(x, y, cell.cx, cell.cy)) {
           if (mode === 'activate') {
-            if (!next.has(cell.id)) { next.add(cell.id); changed = true; }
+            if (next.has(cell.id)) continue;
+            if (!paintFalloff) {
+              next.add(cell.id);
+              changed = true;
+              continue;
+            }
+            const influence = Math.pow(brushInfluence(x, y, cell.cx, cell.cy), falloffPower);
+            const strength = (paintStrengthRef.current.get(cell.id) || 0) + influence;
+            if (strength >= PAINT_ACTIVATION_THRESHOLD) {
+              paintStrengthRef.current.delete(cell.id);
+              next.add(cell.id);
+              changed = true;
+            } else {
+              paintStrengthRef.current.set(cell.id, strength);
+            }
           } else {
+            paintStrengthRef.current.delete(cell.id);
             if (next.has(cell.id)) { next.delete(cell.id); changed = true; }
           }
         }
       }
       return changed ? next : prev;
     });
-  }, [cells, brushRadius, brushShape, brushAngle]);
+  }, [meshCells, brushRadius, brushShape, brushAngle, paintFalloff, falloffPower]);
+
+  const subdivideAt = useCallback((x: number, y: number) => {
+    const hit = (cell: Cell) =>
+      brushHits(x, y, cell.cx, cell.cy) &&
+      (subdivideTarget === 'grid' || activeIdsRef.current.has(cell.id)) &&
+      (!subdivideFalloff || cell.level < Math.ceil(subdivide * Math.pow(brushInfluence(x, y, cell.cx, cell.cy), falloffPower)));
+    const result = applySubdivide(
+      meshCellsRef.current,
+      activeIdsRef.current,
+      parentsRef.current,
+      () => nextIdRef.current++,
+      subdivide,
+      hit
+    );
+    if (!result) return;
+    meshCellsRef.current = result.mesh;
+    activeIdsRef.current = result.active;
+    setMeshCells(result.mesh);
+    setActiveIds(result.active);
+  }, [subdivide, subdivideTarget, subdivideFalloff, falloffPower, brushRadius, brushShape, brushAngle]);
+
+  const coarsenAt = useCallback((x: number, y: number) => {
+    const hit = (cell: Cell) =>
+      brushHits(x, y, cell.cx, cell.cy) &&
+      (subdivideTarget === 'grid' || activeIdsRef.current.has(cell.id));
+    const result = applyCoarsen(meshCellsRef.current, activeIdsRef.current, parentsRef.current, hit);
+    if (!result) return;
+    meshCellsRef.current = result.mesh;
+    activeIdsRef.current = result.active;
+    setMeshCells(result.mesh);
+    setActiveIds(result.active);
+  }, [subdivideTarget, brushRadius, brushShape, brushAngle]);
 
   const doSmoothGaps = useCallback(() => {
     setActiveIds((prev) => {
@@ -1078,16 +1474,19 @@ export default function App() {
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
-    const { x, y } = getPos(e);
-    setMousePos({ x, y });
-    if (isMouseDown) paintAt(x, y, brushMode);
-    else if (isFPressed) paintAt(x, y, 'activate');
-    else if (isEPressed) paintAt(x, y, 'erase');
+    const point = snapBrushPosition(getPos(e));
+    setMousePos(point);
+    if (isDPressed) subdivideAt(point.x, point.y);
+    else if (isSPressed) coarsenAt(point.x, point.y);
+    else if (isMouseDown) paintAt(point.x, point.y, brushMode);
+    else if (isFPressed) paintAt(point.x, point.y, 'activate');
+    else if (isEPressed) paintAt(point.x, point.y, 'erase');
   };
   const handleMouseDown = (e: React.MouseEvent) => {
-    const { x, y } = getPos(e);
+    const point = snapBrushPosition(getPos(e));
     setIsMouseDown(true);
-    paintAt(x, y, brushMode);
+    setMousePos(point);
+    paintAt(point.x, point.y, brushMode);
   };
   const handleMouseUp = () => setIsMouseDown(false);
 
@@ -1105,7 +1504,7 @@ export default function App() {
     for (const hull of hulls) {
       const d = hullMode === 'smooth' ? generateSmoothPathData(hull.points, cellSize * smoothRadius) :
         `M ${hull.points[0]?.x.toFixed(2) || 0} ${hull.points[0]?.y.toFixed(2) || 0} ` + hull.points.slice(1).map((p) => `L ${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join(' ') + ' Z';
-      svg += `  <path d="${d}" fill="${fillHull ? 'rgba(26,26,36,0.08)' : 'none'}" stroke="#1a1a24" stroke-width="${strokeWidth}" />\n`;
+      svg += `  <path d="${d}" fill="${showShapeFill ? 'rgba(26,26,36,0.08)' : 'none'}" stroke="${showShapeOutline ? '#1a1a24' : 'none'}" stroke-width="${strokeWidth}" />\n`;
     }
     svg += `</g>\n<!-- grid:${gridType} cellSize:${cellSize} hullMode:${hullMode} smooth:${smoothRadius} -->\n</svg>`;
     const blob = new Blob([svg], { type: 'image/svg+xml' });
@@ -1162,6 +1561,7 @@ export default function App() {
         </div>
         <div className="flex items-center gap-2 text-[10px]">
           <span className="px-2 py-1 bg-[#1a1a24] rounded">{GRID_LABELS[gridType]}</span>
+          <span className="px-2 py-1 bg-[#1a1a24] rounded">SUB {subdivide}</span>
           <span className="px-2 py-1 bg-[#1a1a24] rounded">{hullMode}</span>
           <span className="px-2 py-1 bg-[var(--accent)] text-black rounded font-bold">{activeCount} CELLS</span>
         </div>
@@ -1181,6 +1581,8 @@ export default function App() {
             <div className="space-y-1.5 text-[11px] leading-4">
               <div className="flex justify-between"><span className="text-[#7c5cff]">F</span><span>Activate cells</span></div>
               <div className="flex justify-between"><span className="text-[#e84855]">E</span><span>Erase cells</span></div>
+              <div className="flex justify-between"><span className="text-[#c2a878]">D</span><span>Subdivide cells</span></div>
+              <div className="flex justify-between"><span className="text-[#ff7a5c]">S</span><span>Reduce subdivision</span></div>
               <div className="flex justify-between"><span>Q</span><span>Smooth gaps</span></div>
               <div className="flex justify-between"><span>V</span><span>Regen Hull</span></div>
               <div className="flex justify-between"><span>X / ⇧X</span><span>Clear / Invert</span></div>
@@ -1188,7 +1590,7 @@ export default function App() {
               <div className="flex justify-between"><span>1-5</span><span>Grid Square/Hex H-V/Tri H-V</span></div>
               <div className="flex justify-between"><span>6-9</span><span>Hull Tight/Smooth/Convex/Concave</span></div>
               <div className="flex justify-between"><span>C</span><span>New Color Group</span></div>
-              <div className="flex justify-between"><span>M / L</span><span>Show Grid / Fill Hull</span></div>
+              <div className="flex justify-between"><span>M / L</span><span>Show Grid / Shape Fill</span></div>
               <div className="flex justify-between"><span>B</span><span>Brush Circle/Square/Tri</span></div>
               <div className="flex justify-between"><span>; '</span><span>Rotate brush ±15°</span></div>
             </div>
@@ -1245,8 +1647,8 @@ export default function App() {
           </div>
           <div className="w-full max-w-[960px] flex flex-wrap gap-2 text-[10px] tracking-wide">
             <div className="px-2 py-1 bg-[#0e0e14] border border-[#1a1a24] rounded">MOUSE {mousePos ? `${mousePos.x.toFixed(0)},${mousePos.y.toFixed(0)}` : '--'}</div>
-            <div className="px-2 py-1 bg-[#0e0e14] border border-[#1a1a24] rounded">BRUSH {brushRadius} {brushShape.toUpperCase()} {brushAngle}° • {brushMode.toUpperCase()} {isFPressed ? '[F]' : ''}{isEPressed ? '[E]' : ''}</div>
-            <div className="px-2 py-1 bg-[#0e0e14] border border-[#1a1a24] rounded">GRID {GRID_LABELS[gridType]} • {cellSize}px • {cells.length} cells</div>
+            <div className="px-2 py-1 bg-[#0e0e14] border border-[#1a1a24] rounded">BRUSH {brushRadius} {brushShape.toUpperCase()} {brushAngle}° • {snapToGrid ? 'SNAP' : 'FREE'} • {brushMode.toUpperCase()} {isFPressed ? '[F]' : ''}{isEPressed ? '[E]' : ''}{isDPressed ? '[D]' : ''}{isSPressed ? '[S]' : ''}</div>
+            <div className="px-2 py-1 bg-[#0e0e14] border border-[#1a1a24] rounded">GRID {GRID_LABELS[gridType]} • {cellSize}px • SUB {subdivide} • {meshCells.length} cells</div>
             <div className="px-2 py-1 bg-[#0e0e14] border border-[#1a1a24] rounded">{activeCount} ACTIVE • {clusterCount} CLUSTERS • LARGEST {largestCluster}</div>
             <div className="px-2 py-1 bg-[#0e0e14] border border-[#1a1a24] rounded">{hulls.length} HULLS • {hullMode.toUpperCase()} • AREA {totalArea.toFixed(0)} • PERIM {totalPerim.toFixed(0)}</div>
             <div className="px-2 py-1 bg-[#1a1a24] rounded">FPS 60 • SPATIAL HASH VIA EDGE MAP</div>
@@ -1260,13 +1662,13 @@ export default function App() {
             <div className="text-[11px] tracking-widest text-[var(--text-dim)] mb-3">BRUSH</div>
             <NCTGraphiteGrid columns="repeat(3, 1fr)" gap={6} className="mb-3">
               {(['circle','square','triangle'] as BrushShape[]).map((t)=>(
-                <button key={t} onClick={()=>setBrushShape(t)} className={`py-2 text-[11px] rounded border ${brushShape===t?'bg-[var(--accent)] text-black border-[var(--accent)] font-bold':'bg-[#1a1a24] border-[#222230] hover:bg-[#222230]'}`}>{t.toUpperCase()}</button>
+                <button key={t} onClick={()=>setBrushShape(t)} className={`inline-flex items-center justify-center gap-1 py-2 text-[11px] rounded border ${brushShape===t?'bg-[var(--accent)] text-black border-[var(--accent)] font-bold':'bg-[#1a1a24] border-[#222230] hover:bg-[#222230]'}`}>{BRUSH_ICONS[t]}<span>{t.toUpperCase()}</span></button>
               ))}
             </NCTGraphiteGrid>
             <div className="flex justify-between text-[10px] mb-1"><span>ROTATE</span><span>{brushAngle}°</span></div>
             <NCTGraphiteGrid columns="repeat(2, 1fr)" gap={6}>
-              <button onClick={()=>setBrushAngle((a)=>(a+345)%360)} className="py-2 text-[11px] rounded border bg-[#1a1a24] border-[#222230] hover:bg-[#222230]">; −15°</button>
-              <button onClick={()=>setBrushAngle((a)=>(a+15)%360)} className="py-2 text-[11px] rounded border bg-[#1a1a24] border-[#222230] hover:bg-[#222230]">' +15°</button>
+              <button onClick={()=>setBrushAngle((a)=>(a+345)%360)} className="inline-flex items-center justify-center gap-1 py-2 text-[11px] rounded border bg-[#1a1a24] border-[#222230] hover:bg-[#222230]">{ICONS.rotateCcw}<span>; −15°</span></button>
+              <button onClick={()=>setBrushAngle((a)=>(a+15)%360)} className="inline-flex items-center justify-center gap-1 py-2 text-[11px] rounded border bg-[#1a1a24] border-[#222230] hover:bg-[#222230]">{ICONS.rotateCw}<span>' +15°</span></button>
             </NCTGraphiteGrid>
           </div>
           <div className="h-px bg-[#1a1a24]" />
@@ -1275,13 +1677,28 @@ export default function App() {
             <div className="text-[11px] tracking-widest text-[var(--text-dim)] mb-3">GRID</div>
             <NCTGraphiteGrid columns="repeat(2, 1fr)" gap={6} className="mb-3">
               {GRID_TYPES.map((t)=>(
-                <button key={t} onClick={()=>loadGridType(t)} className={`py-2 text-[11px] rounded border ${gridType===t?'bg-[var(--accent)] text-black border-[var(--accent)] font-bold':'bg-[#1a1a24] border-[#222230] hover:bg-[#222230]'}`}>{GRID_LABELS[t]}</button>
+                <button key={t} onClick={()=>loadGridType(t)} className={`inline-flex items-center justify-center gap-1 py-2 text-[11px] rounded border ${gridType===t?'bg-[var(--accent)] text-black border-[var(--accent)] font-bold':'bg-[#1a1a24] border-[#222230] hover:bg-[#222230]'}`}>{GRID_ICONS[t]}<span>{GRID_LABELS[t]}</span></button>
               ))}
             </NCTGraphiteGrid>
             <div className="space-y-3">
               <NCTGraphiteSlider label="CELL SIZE" value={cellSize} min={14} max={60} onChange={setCellSize} />
+              <NCTGraphiteSlider label="SUBDIVIDE" value={subdivide} min={0} max={4} step={1} onChange={(v) => setSubdivide(Math.round(v))} hint="Max split depth. D splits under the brush; S merges." />
+              <div>
+                <div className="text-[10px] mb-1.5">SUBDIVIDE TARGET</div>
+                <NCTGraphiteGrid columns="repeat(2, 1fr)" gap={6}>
+                  {(['shape', 'grid'] as SubdivideTarget[]).map((target) => (
+                    <button key={target} onClick={() => setSubdivideTarget(target)} className={`inline-flex items-center justify-center gap-1 py-2 text-[11px] rounded border ${subdivideTarget === target ? 'bg-[var(--accent)] text-black border-[var(--accent)] font-bold' : 'bg-[#1a1a24] border-[#222230] hover:bg-[#222230]'}`}>{target === 'shape' ? ICONS.targetShape : ICONS.gridSquare}<span>{target.toUpperCase()}</span></button>
+                  ))}
+                </NCTGraphiteGrid>
+              </div>
+              <NCTGraphiteSlider label="FALLOFF POWER" value={falloffPower} min={0.25} max={4} step={0.25} format={(v) => v === 1 ? '1.00 • LINEAR' : v.toFixed(2)} onChange={setFalloffPower} hint="Shared brush influence. 1 is linear; higher powers concentrate deposits and detail toward the brush center." />
+              <NCTGraphiteStack direction="row" gap={8} className="text-[10px]">
+                <label className="flex items-center gap-1.5"><input type="checkbox" checked={paintFalloff} onChange={e => setPaintFalloff(e.target.checked)} /> F Paint Falloff</label>
+                <label className="flex items-center gap-1.5"><input type="checkbox" checked={subdivideFalloff} onChange={e => setSubdivideFalloff(e.target.checked)} /> D Subdivide Falloff</label>
+              </NCTGraphiteStack>
               <NCTGraphiteSlider label="JITTER ORGANIC" value={jitter} min={0} max={0.3} step={0.01} format={(v)=>v.toFixed(2)} onChange={setJitter} />
               <NCTGraphiteStack direction="row" gap={8} className="text-[10px]">
+                <label className="flex items-center gap-1.5"><input type="checkbox" checked={snapToGrid} onChange={e=>setSnapToGrid(e.target.checked)} /> Snap Brush to Cells</label>
                 <label className="flex items-center gap-1.5"><input type="checkbox" checked={showGrid} onChange={e=>setShowGrid(e.target.checked)} /> Show Grid</label>
                 <label className="flex items-center gap-1.5"><input type="checkbox" checked={showCenters} onChange={e=>setShowCenters(e.target.checked)} /> Centers</label>
               </NCTGraphiteStack>
@@ -1293,7 +1710,7 @@ export default function App() {
             <div className="text-[11px] tracking-widest text-[var(--text-dim)] mb-3">HULL</div>
             <NCTGraphiteGrid columns="repeat(2, 1fr)" gap={6} className="mb-3">
               {(['tight','smooth','convex','concave'] as HullMode[]).map((m)=>(
-                <button key={m} onClick={()=>setHullMode(m)} className={`py-2 text-[11px] rounded border ${hullMode===m?'bg-[#7c5cff] text-white border-[#7c5cff] font-bold':'bg-[#1a1a24] border-[#222230] hover:bg-[#222230]'}`}>{m.toUpperCase()}</button>
+                <button key={m} onClick={()=>setHullMode(m)} className={`inline-flex items-center justify-center gap-1 py-2 text-[11px] rounded border ${hullMode===m?'bg-[#7c5cff] text-white border-[#7c5cff] font-bold':'bg-[#1a1a24] border-[#222230] hover:bg-[#222230]'}`}>{HULL_ICONS[m]}<span>{m.toUpperCase()}</span></button>
               ))}
             </NCTGraphiteGrid>
             <div className="space-y-3">
@@ -1301,11 +1718,22 @@ export default function App() {
               <NCTGraphiteSlider label="STROKE WIDTH 1-5" value={strokeWidth} min={1} max={5} step={0.1} onChange={setStrokeWidth} />
               <NCTGraphiteSlider label="FILL OPACITY" value={fillOpacity} min={0} max={1} step={0.05} format={(v)=>v.toFixed(2)} onChange={setFillOpacity} />
               <NCTGraphiteStack direction="row" gap={8} className="text-[10px]">
-                <label className="flex items-center gap-1.5"><input type="checkbox" checked={fillHull} onChange={e=>setFillHull(e.target.checked)} /> Fill Hull</label>
                 <label className="flex items-center gap-1.5"><input type="checkbox" checked={colorByCluster} onChange={e=>setColorByCluster(e.target.checked)} /> Color by Cluster</label>
                 <label className="flex items-center gap-1.5"><input type="checkbox" checked={liveHull} onChange={e=>setLiveHull(e.target.checked)} /> Live Hull</label>
               </NCTGraphiteStack>
               <div className="text-[10px] text-[#9a958c]">Corner: {cornerMode} • {hullMode==='tight'?'Tight follows cell edges':hullMode==='smooth'?`Arc radius = cellSize*${smoothRadius}`:hullMode==='convex'?'Monotone chain + Chaikin':'Alpha concave tight'}</div>
+            </div>
+          </div>
+          <div className="h-px bg-[#1a1a24]" />
+          {/* Display */}
+          <div>
+            <div className="text-[11px] tracking-widest text-[var(--text-dim)] mb-3">DISPLAY — SHAPE EFFECT</div>
+            <div className="space-y-2 text-[10px]">
+              <label className="flex items-center gap-1.5"><input type="checkbox" checked={showShapeFill} onChange={e=>setShowShapeFill(e.target.checked)} /> Shape Color Fill</label>
+              <label className="flex items-center gap-1.5"><input type="checkbox" checked={showShapeOutline} onChange={e=>setShowShapeOutline(e.target.checked)} /> Shape Outline</label>
+              <label className="flex items-center gap-1.5"><input type="checkbox" checked={showDivisions} onChange={e=>setShowDivisions(e.target.checked)} /> Base Divisions</label>
+              <label className="flex items-center gap-1.5"><input type="checkbox" checked={showSubdivisions} onChange={e=>setShowSubdivisions(e.target.checked)} /> Subdivision Lines</label>
+              <div className="text-[#9a958c] leading-3.5 pt-1">Turn off Shape Color Fill to use the active shape as a line-based subdivision pattern. Base divisions separate original cells; subdivision lines show splits inside them.</div>
             </div>
           </div>
           <div className="h-px bg-[#1a1a24]" />
@@ -1318,8 +1746,8 @@ export default function App() {
               <div className="bg-[#1a1a24] p-2 rounded"><div className="text-[10px] text-[#9a958c]">LARGEST</div><div className="font-bold">{largestCluster}</div></div>
             </NCTGraphiteGrid>
             <NCTGraphiteGrid columns="repeat(2, 1fr)" gap={8} className="mt-3">
-              <button onClick={doSmoothGaps} className="py-2 text-[11px] bg-[#1a1a24] hover:bg-[#222230] rounded border border-[#222230]">Fill Gaps ≥3 neigh</button>
-              <button onClick={()=>{ setActiveIds(prev=>{ const ns=new Set(prev); for(const cell of cells){ const nb=adjacency.get(cell.id); let an=0; if(nb) for(const n of nb) if(prev.has(n)) an++; if(prev.has(cell.id)&&an===0) ns.delete(cell.id);} return ns; }); }} className="py-2 text-[11px] bg-[#1a1a24] hover:bg-[#222230] rounded border border-[#222230]">Remove Isolated</button>
+              <button onClick={doSmoothGaps} className="inline-flex items-center justify-center gap-1 py-2 text-[11px] bg-[#1a1a24] hover:bg-[#222230] rounded border border-[#222230]">{ICONS.fillGaps}<span>Fill Gaps ≥3 neigh</span></button>
+              <button onClick={()=>{ setActiveIds(prev=>{ const ns=new Set(prev); for(const cell of cells){ const nb=adjacency.get(cell.id); let an=0; if(nb) for(const n of nb) if(prev.has(n)) an++; if(prev.has(cell.id)&&an===0) ns.delete(cell.id);} return ns; }); }} className="inline-flex items-center justify-center gap-1 py-2 text-[11px] bg-[#1a1a24] hover:bg-[#222230] rounded border border-[#222230]">{ICONS.removeIsolated}<span>Remove Isolated</span></button>
             </NCTGraphiteGrid>
           </div>
           <div className="h-px bg-[#1a1a24]" />
@@ -1328,12 +1756,12 @@ export default function App() {
             <div className="text-[11px] tracking-widest text-[var(--text-dim)] mb-3">OUTPUT — DESIGN READY</div>
             <div className="space-y-2">
               <NCTGraphiteGrid columns="repeat(2, 1fr)" gap={8}>
-                <button onClick={computeNow} className="py-2.5 text-[11px] bg-[#1a1a24] hover:bg-[#222230] rounded font-bold">V REGENERATE</button>
-                <button onClick={()=>setShowShirt(v=>!v)} className={`py-2.5 text-[11px] rounded font-bold ${showShirt?'bg-[var(--accent)] text-black':'bg-[#1a1a24] hover:bg-[#222230]'}`}>SHIRT MOCKUP</button>
+                <button onClick={computeNow} className="inline-flex items-center justify-center gap-1.5 py-2.5 text-[11px] bg-[#1a1a24] hover:bg-[#222230] rounded font-bold">{ICONS.regenerate}<span>V REGENERATE</span></button>
+                <button onClick={()=>setShowShirt(v=>!v)} className={`inline-flex items-center justify-center gap-1.5 py-2.5 text-[11px] rounded font-bold ${showShirt?'bg-[var(--accent)] text-black':'bg-[#1a1a24] hover:bg-[#222230]'}`}>{ICONS.shirt}<span>SHIRT MOCKUP</span></button>
               </NCTGraphiteGrid>
               <NCTGraphiteGrid columns="repeat(2, 1fr)" gap={8}>
-                <button onClick={exportSVG} className="py-2.5 text-[11px] bg-[#fdfaf3] text-black hover:bg-white rounded font-bold">EXPORT SVG</button>
-                <button onClick={exportPNG} className="py-2.5 text-[11px] bg-[#222230] hover:bg-[#2a2a3a] rounded font-bold">EXPORT PNG</button>
+                <button onClick={exportSVG} className="inline-flex items-center justify-center gap-1.5 py-2.5 text-[11px] bg-[#fdfaf3] text-black hover:bg-white rounded font-bold">{ICONS.download}<span>EXPORT SVG</span></button>
+                <button onClick={exportPNG} className="inline-flex items-center justify-center gap-1.5 py-2.5 text-[11px] bg-[#222230] hover:bg-[#2a2a3a] rounded font-bold">{ICONS.image}<span>EXPORT PNG</span></button>
               </NCTGraphiteGrid>
               <div className="text-[10px] leading-3.5 bg-[#15151f] p-2 rounded border border-[#1a1a24] text-[#9a958c]">
                 SVG: &lt;g id="cells"&gt; &lt;polygon points=...&gt; per cell, &lt;g id="hulls"&gt; &lt;path d="M ... Z"&gt; per cluster. If Smooth mode, path includes A arc commands. Ready for laser cut / screen print. Includes metadata comment grid type, cell size, hull mode.
@@ -1344,7 +1772,9 @@ export default function App() {
 
           <div className="h-px bg-[#1a1a24]" />
           <div className="text-[10px] text-[#9a958c] leading-4">
-            <span className="text-[#fdfaf3]">Brush:</span> Size [{brushRadius}] shape {brushShape} — cells inside the brush shape activate, and cells it would change highlight under the brush. B cycles circle/square/triangle; ; and ' rotate. Press/hold F to deposit, E to erase at cursor. No mouse movement needed.<br/>
+            <span className="text-[#fdfaf3]">Brush:</span> Size [{brushRadius}] shape {brushShape} — cells inside the brush shape activate, and cells it would change highlight under the brush. Snap Brush to Cells locks every deposit to an original grid center, which keeps square-brush blocks aligned. B cycles circle/square/triangle; ; and ' rotate. Press/hold F to deposit, E to erase, D to subdivide, S to reduce subdivision. No mouse movement needed.<br/>
+            <span className="text-[#fdfaf3]">Subdivide:</span> Target {subdivideTarget}; max depth {subdivide}. Square splits into 4, triangle into 4, hex into 6 triangles then 4. Shape only splits active cells; Grid can split any cell. Active cells keep paint on children. S merges a parent when all children are still leaves.<br/>
+            <span className="text-[#fdfaf3]">Falloff:</span> Power {falloffPower.toFixed(2)} {falloffPower === 1 ? '(linear)' : ''}. F activates the center first and accumulates toward the edge; D creates deeper detail at the center and coarser edges. Either effect can be toggled independently.
             <span className="text-[#fdfaf3]">Hull:</span> Group active via flood fill (BFS through edge-adjacent neighbors). Collect perimeter edges where neighbor not active. Link edges into closed loops via point map + min-turn. Tight = direct polyline. Smooth = arcTo with radius cellSize*smoothRadius. Convex = monotone chain. Concave = same as tight (follows indentations).
           </div>
         </NCTGraphiteStagePanel>

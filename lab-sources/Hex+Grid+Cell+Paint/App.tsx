@@ -35,6 +35,7 @@ const TRASH_ICON = svgIcon('<path d="M3 4.5h10M6.5 4.5V3h3v1.5"/><path d="M4.5 4
 const DOWNLOAD_ICON = svgIcon('<path d="M8 2v8M4.8 7.2L8 10.4l3.2-3.2"/><path d="M3 12.5h10"/>');
 const SAVE_ICON = svgIcon('<path d="M3.5 3.5h8l1 1v8h-9z"/><path d="M5.5 3.5v3h5v-3"/><path d="M5.5 12.5v-4h5v4"/>');
 const REFRESH_ICON = svgIcon('<path d="M13 8a5 5 0 1 1-1.5-3.6"/><path d="M13 1.8v2.6h-2.6"/>');
+const RESET_ICON = svgIcon('<polyline points="0.7,2.7 0.7,6.7 4.7,6.7"/><path d="M2.3 10a6 6 0 1 0 1.4-6.2L0.7 6.7"/>');
 const FOLDER_ICON = svgIcon('<path d="M2 4.5c0-.6.4-1 1-1h3l1.2 1.5H13c.6 0 1 .4 1 1v5c0 .6-.4 1-1 1H3c-.6 0-1-.4-1-1z"/>');
 
 const DEFAULT_KEYS: KeyMap = {
@@ -856,7 +857,7 @@ export default function App(){
           <div className="p-4 border-b border-[#1a1a24]">
             <div className="flex items-center justify-between mb-3">
               <div className="text-[11px] tracking-[0.18em] text-[#7a7680]">COLOR GROUPS</div>
-              <button onClick={()=>{ setGroupsUsed([0]); cellsRef.current.forEach(c=>c.active=false); }} className="text-[9px] px-2 py-1 rounded bg-[#1a1a24] border border-[#23232f] text-[#7a7680]">RESET</button>
+              <NCTGraphiteButton label="RESET" icon={RESET_ICON} onClick={()=>{ setGroupsUsed([0]); cellsRef.current.forEach(c=>c.active=false); }} className="text-[9px] px-2 py-1 rounded" />
             </div>
             <div className="space-y-1.5">
               {groupedStats.length===0 && <div className="text-[10px] text-[#5a5860] p-3 border border-dashed border-[#23232f] rounded-[8px]">No active cells yet. Hold F and aim.</div>}
