@@ -896,19 +896,21 @@ export default function App() {
   const [subdivide, setSubdivide] = useState(2);
   const [subdivideTarget, setSubdivideTarget] = useState<SubdivideTarget>('shape');
   const [falloffPower, setFalloffPower] = useState(1);
-  const [paintFalloff, setPaintFalloff] = useState(true);
+  const [paintFalloff, setPaintFalloff] = useState(false);
   const [subdivideFalloff, setSubdivideFalloff] = useState(true);
   const [jitter, setJitter] = useState(0);
-  const [snapToGrid, setSnapToGrid] = useState(true);
+  const [snapToGridDirections, setSnapToGridDirections] = useState(false);
+  const [snapToCellCenters, setSnapToCellCenters] = useState(false);
+  const [snapTolerance, setSnapTolerance] = useState(10);
   const [brushRadius, setBrushRadius] = useState(64);
   const [brushShape, setBrushShape] = useState<BrushShape>('circle');
   const [brushAngle, setBrushAngle] = useState(0);
   const [hullMode, setHullMode] = useState<HullMode>('tight');
   const [smoothRadius, setSmoothRadius] = useState(0.22);
-  const [showGrid, setShowGrid] = useState(true);
+  const [showGrid, setShowGrid] = useState(false);
   const [showCenters, setShowCenters] = useState(false);
   const [showShapeFill, setShowShapeFill] = useState(true);
-  const [showShapeOutline, setShowShapeOutline] = useState(true);
+  const [showShapeOutline, setShowShapeOutline] = useState(false);
   const [showDivisions, setShowDivisions] = useState(false);
   const [showSubdivisions, setShowSubdivisions] = useState(true);
   const [fillOpacity, setFillOpacity] = useState(0.18);
@@ -926,6 +928,7 @@ export default function App() {
   const parentsRef = useRef(new Map<number, ParentRecord>());
   const nextIdRef = useRef(0);
   const paintStrengthRef = useRef(new Map<number, number>());
+  const snapAnchorRef = useRef<Vec | null>(null);
   const loadGridType = (next: GridType) => {
     pendingActiveRef.current = null;
     paintStrengthRef.current.clear();
@@ -935,11 +938,14 @@ export default function App() {
   const { heldActions: hullHeld } = useNCTGraphiteCommands({
     commands: HULL_COMMANDS,
     ignoreInputs: true,
+    onKeyUp: (key) => {
+      if (key === 'f' || key === 'e' || key === 'd' || key === 's') snapAnchorRef.current = null;
+    },
     onAction: (id, e) => {
-      if (id === "paint") { setBrushModeState('activate'); if (mousePos) paintAt(mousePos.x, mousePos.y, 'activate'); }
-      if (id === "erase") { setBrushModeState('erase'); if (mousePos) paintAt(mousePos.x, mousePos.y, 'erase'); }
-      if (id === "subdivide") { if (e?.repeat) return; if (mousePos) subdivideAt(mousePos.x, mousePos.y); }
-      if (id === "coarsen") { if (e?.repeat) return; if (mousePos) coarsenAt(mousePos.x, mousePos.y); }
+      if (id === "paint") { setBrushModeState('activate'); if (mousePos) { beginSnapStroke(mousePos); const point = snapBrushPosition(mousePos); paintAt(point.x, point.y, 'activate'); } }
+      if (id === "erase") { setBrushModeState('erase'); if (mousePos) { beginSnapStroke(mousePos); const point = snapBrushPosition(mousePos); paintAt(point.x, point.y, 'erase'); } }
+      if (id === "subdivide") { if (e?.repeat) return; if (mousePos) { beginSnapStroke(mousePos); const point = snapBrushPosition(mousePos); subdivideAt(point.x, point.y); } }
+      if (id === "coarsen") { if (e?.repeat) return; if (mousePos) { beginSnapStroke(mousePos); const point = snapBrushPosition(mousePos); coarsenAt(point.x, point.y); } }
       if (id === "smooth") doSmoothGaps();
       if (id === "compute") computeNow();
       if (id === "clear") {
@@ -1102,6 +1108,7 @@ export default function App() {
   useEffect(() => {
     parentsRef.current = new Map();
     paintStrengthRef.current.clear();
+    snapAnchorRef.current = null;
     nextIdRef.current = baseCells.reduce((m, c) => Math.max(m, c.id + 1), 0);
     setMeshCells(baseCells);
     meshCellsRef.current = baseCells;
@@ -1120,8 +1127,8 @@ export default function App() {
   }, [meshCells]);
 
   const { cells, edgeMap, adjacency } = gridData;
-  const snapBrushPosition = useCallback((point: Vec): Vec => {
-    if (!snapToGrid || baseCells.length === 0) return point;
+  const snapToNearestCellCenter = useCallback((point: Vec): Vec => {
+    if (!snapToCellCenters || baseCells.length === 0) return point;
     let nearest = baseCells[0];
     let nearestDistance = Infinity;
     for (const cell of baseCells) {
@@ -1134,7 +1141,34 @@ export default function App() {
       }
     }
     return { x: nearest.cx, y: nearest.cy };
-  }, [baseCells, snapToGrid]);
+  }, [baseCells, snapToCellCenters]);
+  const beginSnapStroke = useCallback((point: Vec) => {
+    if (!snapAnchorRef.current) snapAnchorRef.current = snapToNearestCellCenter(point);
+  }, [snapToNearestCellCenter]);
+  const snapBrushPosition = useCallback((point: Vec): Vec => {
+    const centerSnappedPoint = snapToNearestCellCenter(point);
+    const anchor = snapAnchorRef.current;
+    if (!snapToGridDirections || !anchor) return centerSnappedPoint;
+    const directions = gridType === 'square'
+      ? [0, Math.PI / 2]
+      : [0, Math.PI / 3, (2 * Math.PI) / 3];
+    let closest: Vec | null = null;
+    let closestDistance = Infinity;
+    for (const angle of directions) {
+      const ux = Math.cos(angle);
+      const uy = Math.sin(angle);
+      const dx = centerSnappedPoint.x - anchor.x;
+      const dy = centerSnappedPoint.y - anchor.y;
+      const lengthOnLine = dx * ux + dy * uy;
+      const candidate = { x: anchor.x + lengthOnLine * ux, y: anchor.y + lengthOnLine * uy };
+      const perpendicularDistance = Math.hypot(centerSnappedPoint.x - candidate.x, centerSnappedPoint.y - candidate.y);
+      if (perpendicularDistance < closestDistance) {
+        closest = candidate;
+        closestDistance = perpendicularDistance;
+      }
+    }
+    return closest && closestDistance <= snapTolerance ? closest : centerSnappedPoint;
+  }, [gridType, snapToGridDirections, snapTolerance, snapToNearestCellCenter]);
 
   // Hull computation
   const computeNow = useCallback(() => {
@@ -1474,6 +1508,7 @@ export default function App() {
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
+    if (isMouseDown || isFPressed || isEPressed || isDPressed || isSPressed) beginSnapStroke(getPos(e));
     const point = snapBrushPosition(getPos(e));
     setMousePos(point);
     if (isDPressed) subdivideAt(point.x, point.y);
@@ -1483,12 +1518,17 @@ export default function App() {
     else if (isEPressed) paintAt(point.x, point.y, 'erase');
   };
   const handleMouseDown = (e: React.MouseEvent) => {
-    const point = snapBrushPosition(getPos(e));
+    const rawPoint = getPos(e);
+    beginSnapStroke(rawPoint);
+    const point = snapBrushPosition(rawPoint);
     setIsMouseDown(true);
     setMousePos(point);
     paintAt(point.x, point.y, brushMode);
   };
-  const handleMouseUp = () => setIsMouseDown(false);
+  const handleMouseUp = () => {
+    setIsMouseDown(false);
+    snapAnchorRef.current = null;
+  };
 
   // Keyboard handling lives in useNCTGraphiteCommands (HULL_COMMANDS above).
 
@@ -1624,7 +1664,7 @@ export default function App() {
               onMouseMove={handleMouseMove}
               onMouseDown={handleMouseDown}
               onMouseUp={handleMouseUp}
-              onMouseLeave={() => { setIsMouseDown(false); setMousePos(null); }}
+              onMouseLeave={() => { setIsMouseDown(false); setMousePos(null); snapAnchorRef.current = null; }}
               className="block max-w-[100vw] lg:max-w-[960px] w-[960px] h-[720px] cursor-crosshair touch-none"
             />
             {showShirt && (
@@ -1647,7 +1687,7 @@ export default function App() {
           </div>
           <div className="w-full max-w-[960px] flex flex-wrap gap-2 text-[10px] tracking-wide">
             <div className="px-2 py-1 bg-[#0e0e14] border border-[#1a1a24] rounded">MOUSE {mousePos ? `${mousePos.x.toFixed(0)},${mousePos.y.toFixed(0)}` : '--'}</div>
-            <div className="px-2 py-1 bg-[#0e0e14] border border-[#1a1a24] rounded">BRUSH {brushRadius} {brushShape.toUpperCase()} {brushAngle}° • {snapToGrid ? 'SNAP' : 'FREE'} • {brushMode.toUpperCase()} {isFPressed ? '[F]' : ''}{isEPressed ? '[E]' : ''}{isDPressed ? '[D]' : ''}{isSPressed ? '[S]' : ''}</div>
+            <div className="px-2 py-1 bg-[#0e0e14] border border-[#1a1a24] rounded">BRUSH {brushRadius} {brushShape.toUpperCase()} {brushAngle}° • {snapToCellCenters ? 'CELL SNAP ' : ''}{snapToGridDirections ? `LINE SNAP ${snapTolerance}` : 'FREE'} • {brushMode.toUpperCase()} {isFPressed ? '[F]' : ''}{isEPressed ? '[E]' : ''}{isDPressed ? '[D]' : ''}{isSPressed ? '[S]' : ''}</div>
             <div className="px-2 py-1 bg-[#0e0e14] border border-[#1a1a24] rounded">GRID {GRID_LABELS[gridType]} • {cellSize}px • SUB {subdivide} • {meshCells.length} cells</div>
             <div className="px-2 py-1 bg-[#0e0e14] border border-[#1a1a24] rounded">{activeCount} ACTIVE • {clusterCount} CLUSTERS • LARGEST {largestCluster}</div>
             <div className="px-2 py-1 bg-[#0e0e14] border border-[#1a1a24] rounded">{hulls.length} HULLS • {hullMode.toUpperCase()} • AREA {totalArea.toFixed(0)} • PERIM {totalPerim.toFixed(0)}</div>
@@ -1698,10 +1738,12 @@ export default function App() {
               </NCTGraphiteStack>
               <NCTGraphiteSlider label="JITTER ORGANIC" value={jitter} min={0} max={0.3} step={0.01} format={(v)=>v.toFixed(2)} onChange={setJitter} />
               <NCTGraphiteStack direction="row" gap={8} className="text-[10px]">
-                <label className="flex items-center gap-1.5"><input type="checkbox" checked={snapToGrid} onChange={e=>setSnapToGrid(e.target.checked)} /> Snap Brush to Cells</label>
+                <label className="flex items-center gap-1.5"><input type="checkbox" checked={snapToCellCenters} onChange={e=>setSnapToCellCenters(e.target.checked)} /> Snap to Cell Centers</label>
+                <label className="flex items-center gap-1.5"><input type="checkbox" checked={snapToGridDirections} onChange={e=>setSnapToGridDirections(e.target.checked)} /> Line Snap to Grid Directions</label>
                 <label className="flex items-center gap-1.5"><input type="checkbox" checked={showGrid} onChange={e=>setShowGrid(e.target.checked)} /> Show Grid</label>
                 <label className="flex items-center gap-1.5"><input type="checkbox" checked={showCenters} onChange={e=>setShowCenters(e.target.checked)} /> Centers</label>
               </NCTGraphiteStack>
+              <NCTGraphiteSlider label="LINE SNAP TOLERANCE" value={snapTolerance} min={2} max={48} step={1} onChange={setSnapTolerance} hint="The brush center snaps to a guide only within this distance." />
             </div>
           </div>
           <div className="h-px bg-[#1a1a24]" />
@@ -1772,7 +1814,7 @@ export default function App() {
 
           <div className="h-px bg-[#1a1a24]" />
           <div className="text-[10px] text-[#9a958c] leading-4">
-            <span className="text-[#fdfaf3]">Brush:</span> Size [{brushRadius}] shape {brushShape} — cells inside the brush shape activate, and cells it would change highlight under the brush. Snap Brush to Cells locks every deposit to an original grid center, which keeps square-brush blocks aligned. B cycles circle/square/triangle; ; and ' rotate. Press/hold F to deposit, E to erase, D to subdivide, S to reduce subdivision. No mouse movement needed.<br/>
+            <span className="text-[#fdfaf3]">Brush:</span> Size [{brushRadius}] shape {brushShape} — cells inside the brush shape activate, and cells it would change highlight under the brush. Snap to Cell Centers locks deposits to original cell centers; Line Snap uses the first brush center as a guide origin and only locks when the center comes within its tolerance. When both are on, cell centering runs first. Square follows horizontal/vertical guides; hex and triangle follow 0°/60°/120° guides. B cycles circle/square/triangle; ; and ' rotate. Press/hold F to deposit, E to erase, D to subdivide, S to reduce subdivision. No mouse movement needed.<br/>
             <span className="text-[#fdfaf3]">Subdivide:</span> Target {subdivideTarget}; max depth {subdivide}. Square splits into 4, triangle into 4, hex into 6 triangles then 4. Shape only splits active cells; Grid can split any cell. Active cells keep paint on children. S merges a parent when all children are still leaves.<br/>
             <span className="text-[#fdfaf3]">Falloff:</span> Power {falloffPower.toFixed(2)} {falloffPower === 1 ? '(linear)' : ''}. F activates the center first and accumulates toward the edge; D creates deeper detail at the center and coarser edges. Either effect can be toggled independently.
             <span className="text-[#fdfaf3]">Hull:</span> Group active via flood fill (BFS through edge-adjacent neighbors). Collect perimeter edges where neighbor not active. Link edges into closed loops via point map + min-turn. Tight = direct polyline. Smooth = arcTo with radius cellSize*smoothRadius. Convex = monotone chain. Concave = same as tight (follows indentations).

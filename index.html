@@ -14,7 +14,9 @@
   #bar{ display:flex; align-items:center; gap:10px; padding:10px 14px; border-bottom:1px solid var(--line); background:#0e0e14; flex-wrap:wrap; }
   #bar h1{ font-size:12px; letter-spacing:.18em; margin:0 8px 0 0; }
   #bar h1 .dot{ display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--accent); margin-right:8px; }
-  .appbtn{ padding:7px 12px; font-size:11px; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--text); cursor:pointer; }
+  #buttons{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  .appbtn{ display:inline-flex; align-items:center; gap:6px; padding:7px 12px; font-size:11px; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--text); cursor:pointer; }
+  .appbtn svg{ display:block; flex:none; }
   .appbtn:hover{ background:#222230; }
   .appbtn.active{ background:var(--accent); color:#000; border-color:var(--accent); font-weight:bold; }
   #status{ font-size:10px; color:var(--dim); letter-spacing:.08em; }
@@ -153,12 +155,41 @@ async function compileSource(path, text) {
   return rewriteLabImports(src, dir);
 }
 
+function labIcon(inner) {
+  return `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
+}
+
 const APPS = [
-  { id: 'hull', title: 'Grid Cell Hull Lab', dir: 'lab-sources/Grid+Cell+Hull+Lab' },
-  { id: 'shading', title: 'Grid Dot Shading Lab', dir: 'lab-sources/Grid+Dot+Shading+Lab' },
-  { id: 'hex', title: 'Hex Grid Cell Paint', dir: 'lab-sources/Hex+Grid+Cell+Paint' },
-  { id: 'arc', title: 'Metaball Grid Lab', dir: 'lab-sources/Arc+Metaball+Grid+Lab' },
-  { id: 'vector', title: 'Grid Paint Vector Field Lab', dir: 'lab-sources/Grid+Paint+Vector+Field+Key' },
+  {
+    id: 'hull',
+    title: 'Grid Cell Hull Lab',
+    dir: 'lab-sources/Grid+Cell+Hull+Lab',
+    icon: labIcon('<rect x="3" y="3" width="3" height="3"/><rect x="6.5" y="3" width="3" height="3"/><rect x="10" y="6.5" width="3" height="3"/><rect x="3" y="6.5" width="3" height="3"/><polygon points="2.5,10 2.5,2.5 10,2.5 13.5,6 13.5,13.5 6,13.5"/>'),
+  },
+  {
+    id: 'shading',
+    title: 'Grid Dot Shading Lab',
+    dir: 'lab-sources/Grid+Dot+Shading+Lab',
+    icon: labIcon('<circle cx="4" cy="4" r="1.1" fill="currentColor" stroke="none"/><circle cx="8" cy="4" r="1.7" fill="currentColor" stroke="none"/><circle cx="12" cy="4" r="1.2" fill="currentColor" stroke="none"/><circle cx="4" cy="8" r="1.6" fill="currentColor" stroke="none"/><circle cx="8" cy="8" r="2.2" fill="currentColor" stroke="none"/><circle cx="12" cy="8" r="1.4" fill="currentColor" stroke="none"/><circle cx="4" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="8" cy="12" r="1.5" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.8" fill="currentColor" stroke="none"/>'),
+  },
+  {
+    id: 'hex',
+    title: 'Hex Grid Cell Paint',
+    dir: 'lab-sources/Hex+Grid+Cell+Paint',
+    icon: labIcon('<polygon points="8,1.6 13.6,4.8 13.6,11.2 8,14.4 2.4,11.2 2.4,4.8"/><polygon points="8,5.2 10.8,6.8 10.8,10 8,11.6 5.2,10 5.2,6.8"/>'),
+  },
+  {
+    id: 'arc',
+    title: 'Metaball Grid Lab',
+    dir: 'lab-sources/Arc+Metaball+Grid+Lab',
+    icon: labIcon('<circle cx="6" cy="8" r="4"/><circle cx="10.4" cy="8" r="3.2"/>'),
+  },
+  {
+    id: 'vector',
+    title: 'Grid Paint Vector Field Lab',
+    dir: 'lab-sources/Grid+Paint+Vector+Field+Key',
+    icon: labIcon('<path d="M2 5.5h5l-1.6-1.6M7 5.5l-1.6 1.6"/><path d="M5.5 10.5h7l-2.1-2.1M12.5 10.5l-2.1 2.1"/><path d="M3.5 13h4"/>'),
+  },
 ];
 
 const buttonsEl = document.getElementById('buttons');
@@ -172,9 +203,10 @@ let currentId = null;
 
 for (const app of APPS.filter((a) => !a.hidden)) {
   const b = document.createElement('button');
+  b.type = 'button';
   b.className = 'appbtn';
-  b.textContent = app.title;
   b.dataset.app = app.id;
+  b.innerHTML = `${app.icon}<span>${app.title}</span>`;
   b.addEventListener('click', () => loadApp(app.id));
   buttonsEl.appendChild(b);
 }
