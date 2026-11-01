@@ -1,0 +1,4 @@
+[submodule "NCTGraphite"]
+	path = NCTGraphite
+	url = https://github.com/noctivagous/NCTGraphite.git
+	branch = main

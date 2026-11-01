@@ -1,0 +1,12 @@
+@import url('https://fonts.googleapis.com/css2?family=Fragment+Mono:ital@0;1&family=Syne:wght@600;700&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Shared tokens now come from NCTGraphiteTheme.css (NCTTechDesMVD),
+ * injected by the lab loader. Page background stays paper (light lab). */
+*{font-variant-ligatures:none}
+html,body{margin:0; background:var(--paper); color:var(--text);}
+
+.mono{font-family:"Fragment Mono", ui-monospace, SFMono-Regular, monospace}
+.display{font-family:"Syne", sans-serif; letter-spacing:-0.02em}

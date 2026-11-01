@@ -1,4 +1,6 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from "react";
+import { NCTGraphiteSlider, NCTGraphiteStack, NCTGraphiteGrid, NCTGraphiteToggle, useNCTGraphiteCommands } from "@nct/nctgraphite";
+import type { NCTGraphiteCommandDef } from "@nct/nctgraphite";
 
 type GridType = "flat" | "pointy" | "square";
 type Cell = {
@@ -54,6 +56,13 @@ const ACTIONS_LABEL: Record<string, {label:string, desc:string}> = {
   gridSquare: {label:"SQUARE", desc:"Square grid"},
 };
 
+const HEX_COMMANDS: NCTGraphiteCommandDef[] = Object.entries(ACTIONS_LABEL).map(([id, meta]) => ({
+  id,
+  label: meta.label,
+  desc: meta.desc,
+  defaultKey: DEFAULT_KEYS[id] ?? "",
+}));
+
 function hexPoints(cx:number, cy:number, size:number, type:GridType, rotOffset=0){
   const pts: [number,number][] = [];
   for(let i=0;i<6;i++){
@@ -102,14 +111,42 @@ export default function App(){
   const [falloff, setFalloff] = useState(0.35);
   const [showCenters, setShowCenters] = useState(false);
   const [showGridLines, setShowGridLines] = useState(true);
-  const [keyMap, setKeyMap] = useState<KeyMap>(DEFAULT_KEYS);
-  const [rebinding, setRebinding] = useState<string|null>(null);
   const [colorIdx, setColorIdx] = useState(0);
   const [secondaryIdx] = useState(1);
   const [activeCount, setActiveCount] = useState(0);
   const [previewCount, setPreviewCount] = useState(0);
   const [toast, setToast] = useState<string|null>(null);
-  const [heldActions, setHeldActions] = useState<Set<string>>(new Set());
+  const { keyMap, heldActions, rebinding, beginRebind } = useNCTGraphiteCommands({
+    commands: HEX_COMMANDS,
+    onAction: (id, e) => {
+      if (id === "clear") {
+        if (Date.now() - lastClearRef.current > 300) {
+          lastClearRef.current = Date.now();
+          cellsRef.current.forEach(c=>{c.active=false;});
+          setToast("CLEARED ALL");
+          setTimeout(()=>setToast(null),1200);
+        }
+      }
+      if (id === "newColor" && !e?.repeat) {
+        setColorIdx(i=>{
+          const n = (i+1)%PALETTE.length;
+          setGroupsUsed(g=> g.includes(n)?g:[...g,n]);
+          return n;
+        });
+        setToast(`COLOR → ${PALETTE[(colorIdxRef.current+1)%PALETTE.length]}`);
+        setTimeout(()=>setToast(null),1000);
+      }
+      if (id === "gridFlat") setGridType("flat");
+      if (id === "gridPointy") setGridType("pointy");
+      if (id === "gridSquare") setGridType("square");
+      if (id === "smaller") setBrushRadius(r=>Math.max(8, r-((e?.shiftKey)?10:3)));
+      if (id === "larger") setBrushRadius(r=>Math.min(120, r+((e?.shiftKey)?10:3)));
+    },
+    onRebind: (action, key) => {
+      setToast(`BOUND ${action.toUpperCase()} → [${key.toUpperCase()}]`);
+      setTimeout(()=>setToast(null),1800);
+    },
+  });
   const [groupsUsed, setGroupsUsed] = useState<number[]>([0]);
 
   // ---- persistence state (required for backend wiring) ----
@@ -126,7 +163,6 @@ export default function App(){
   const hexSizeRef = useRef(hexSize);
   const gridTypeRef = useRef(gridType);
   const falloffRef = useRef(falloff);
-  const keyMapRef = useRef(keyMap);
   const heldRef = useRef<Set<string>>(new Set());
   const colorIdxRef = useRef(colorIdx);
   const rafRef = useRef<number>(0);
@@ -136,8 +172,8 @@ export default function App(){
   useEffect(()=>{ hexSizeRef.current=hexSize },[hexSize]);
   useEffect(()=>{ gridTypeRef.current=gridType },[gridType]);
   useEffect(()=>{ falloffRef.current=falloff },[falloff]);
-  useEffect(()=>{ keyMapRef.current=keyMap },[keyMap]);
   useEffect(()=>{ colorIdxRef.current=colorIdx },[colorIdx]);
+  useEffect(()=>{ heldRef.current = heldActions },[heldActions]);
 
   const currentColor = PALETTE[colorIdx % PALETTE.length];
   const secondaryColor = PALETTE[secondaryIdx % PALETTE.length];
@@ -282,76 +318,7 @@ export default function App(){
     return ()=>clearInterval(iv);
   },[]);
 
-  // key handling
-  useEffect(()=>{
-    const handleKeyDown = (e:KeyboardEvent)=>{
-      const key = e.key.toLowerCase();
-      if(rebinding){
-        e.preventDefault();
-        const action = rebinding;
-        setKeyMap(prev=>({...prev, [action]: key}));
-        setRebinding(null);
-        setToast(`BOUND ${action.toUpperCase()} → [${key.toUpperCase()}]`);
-        setTimeout(()=>setToast(null),1800);
-        return;
-      }
-
-      const matched: string[] = [];
-      Object.entries(keyMapRef.current).forEach(([action, mapped])=>{
-        if(mapped===key || mapped===e.key) matched.push(action);
-      });
-      matched.forEach(act=>{
-        if(!heldRef.current.has(act)){
-          heldRef.current.add(act);
-          setHeldActions(new Set(heldRef.current));
-        }
-      });
-
-      if(matched.includes("clear") ){
-        if(Date.now()-lastClearRef.current>300){
-          lastClearRef.current=Date.now();
-          cellsRef.current.forEach(c=>{c.active=false;});
-          setToast("CLEARED ALL");
-          setTimeout(()=>setToast(null),1200);
-        }
-      }
-      if(matched.includes("newColor")){
-        if(!e.repeat){
-          setColorIdx(i=>{
-            const n = (i+1)%PALETTE.length;
-            setGroupsUsed(g=> g.includes(n)?g:[...g,n]);
-            return n;
-          });
-          setToast(`COLOR → ${PALETTE[(colorIdxRef.current+1)%PALETTE.length]}`);
-          setTimeout(()=>setToast(null),1000);
-        }
-      }
-      if(matched.includes("gridFlat")) setGridType("flat");
-      if(matched.includes("gridPointy")) setGridType("pointy");
-      if(matched.includes("gridSquare")) setGridType("square");
-      if(matched.includes("smaller")){
-        setBrushRadius(r=>Math.max(8, r- (e.shiftKey?10:3)));
-      }
-      if(matched.includes("larger")){
-        setBrushRadius(r=>Math.min(120, r+ (e.shiftKey?10:3)));
-      }
-    };
-    const handleKeyUp = (e:KeyboardEvent)=>{
-      const key = e.key.toLowerCase();
-      Object.entries(keyMapRef.current).forEach(([action,mapped])=>{
-        if(mapped===key || mapped===e.key){
-          heldRef.current.delete(action);
-          setHeldActions(new Set(heldRef.current));
-        }
-      });
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    window.addEventListener("keyup", handleKeyUp);
-    return ()=>{
-      window.removeEventListener("keydown", handleKeyDown);
-      window.removeEventListener("keyup", handleKeyUp);
-    };
-  },[rebinding]);
+  // key handling lives in useNCTGraphiteCommands (keymap, held state, rebind).
 
   // mouse move
   useEffect(()=>{
@@ -667,7 +634,7 @@ export default function App(){
         </div>
       </header>
 
-      <div className="flex-1 mx-auto w-full max-w-[1520px] grid grid-cols-12 gap-0 md:gap-[1px] bg-[#23232f] border-x border-[#23232f]">
+      <NCTGraphiteGrid columns="repeat(12, 1fr)" gap={0} wideMinWidth={768} wideGap={1} className="flex-1 mx-auto w-full max-w-[1520px] bg-[#23232f] border-x border-[#23232f]">
         <aside className="col-span-12 md:col-span-3 bg-[#0e0e14] flex flex-col min-h-0">
           <div className="p-4 border-b border-[#1a1a24]">
             <div className="text-[11px] tracking-[0.18em] text-[#7a7680] mb-3">CONTROLS / KEY-MAP</div>
@@ -686,7 +653,7 @@ export default function App(){
                       </div>
                     </div>
                     <button
-                      onClick={()=> setRebinding(isRebinding?null:action)}
+                      onClick={()=> beginRebind(isRebinding?null:action)}
                       className={`text-[9px] tracking-[0.1em] px-2 py-1 rounded border transition ${isRebinding?"bg-[#00e5ff] text-black border-[#00e5ff]":"bg-[#1a1a24] border-[#2a2a3a] text-[#7a7680] hover:text-white hover:border-[#3a3a4a]"}`}
                     >
                       {isRebinding?"PRESS KEY":"REBIND"}
@@ -701,26 +668,22 @@ export default function App(){
               <div className="mt-2 text-[11px] leading-[1.35] text-[#3a352c]">
                 Mouse <b>only aims</b>. Keys do activation. Hold <b>F</b> and move over grid — hexes whose center is within brush radius + size·0.4 become active. <span className="px-1 bg-[#1a1a24] text-white rounded">Q</span> toggles, <span className="px-1 bg-[#ff4d6d] text-white rounded">E</span> erases.
               </div>
-              <div className="mt-2 flex gap-1.5">
+              <NCTGraphiteStack direction="row" gap={6} className="mt-2">
                 <div className="h-[22px] px-2 rounded-full bg-[#1a1a24] text-white text-[10px] grid place-items-center">○ BRUSH</div>
                 <div className="h-[22px] px-2 rounded-full border border-[#1a1a24] text-[10px] grid place-items-center">DIST &lt; R + 0.5·SIZE</div>
-              </div>
+              </NCTGraphiteStack>
             </div>
           </div>
 
           <div className="p-4 space-y-5">
             <div>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[11px] tracking-[0.14em] text-[#7a7680]">BRUSH RADIUS</span>
-                <span className="text-[11px] font-bold text-[#ece9e3] bg-[#1a1a24] border border-[#23232f] px-2 py-[2px] rounded">{brushRadius}px</span>
-              </div>
-              <input type="range" min={8} max={120} value={brushRadius} onChange={e=>setBrushRadius(parseInt(e.target.value))} className="w-full accent-[#7c5cff]"/>
+              <NCTGraphiteSlider label="BRUSH RADIUS" value={brushRadius} min={8} max={120} format={(v)=>`${Math.round(v)}px`} onChange={(v)=>setBrushRadius(Math.round(v))} />
               <div className="flex justify-between text-[9px] text-[#5a5860] mt-1"><span>[ SMALLER</span><span>LARGER ]</span></div>
             </div>
 
             <div>
               <div className="text-[11px] tracking-[0.14em] text-[#7a7680] mb-2">ACTIVE COLOR</div>
-              <div className="flex gap-2 flex-wrap">
+              <NCTGraphiteStack direction="row" gap={8} wrap>
                 {PALETTE.map((col,i)=>{
                   const active = i===colorIdx;
                   return (
@@ -733,8 +696,8 @@ export default function App(){
                     />
                   );
                 })}
-              </div>
-              <div className="mt-3 flex gap-2">
+              </NCTGraphiteStack>
+              <NCTGraphiteStack direction="row" gap={8} className="mt-3">
                 <div className="flex-1 h-[32px] rounded-[8px] border border-[#23232f] bg-[#15151e] flex items-center px-2 gap-2">
                   <div className="w-[16px] h-[16px] rounded-full" style={{background:currentColor}}/>
                   <span className="text-[11px] text-[#ece9e3]">{currentColor}</span>
@@ -743,10 +706,10 @@ export default function App(){
                   <div className="w-[16px] h-[16px] rounded-full" style={{background:secondaryColor}}/>
                   <span className="text-[11px] text-[#ece9e3]">2nd G</span>
                 </div>
-              </div>
+              </NCTGraphiteStack>
             </div>
 
-            <div className="grid grid-cols-3 gap-1.5">
+            <NCTGraphiteGrid columns="repeat(3, 1fr)" gap={6}>
               {(["flat","pointy","square"] as GridType[]).map(t=>(
                 <button
                   key={t}
@@ -756,12 +719,12 @@ export default function App(){
                   {t.toUpperCase()}
                 </button>
               ))}
-            </div>
+            </NCTGraphiteGrid>
 
-            <div className="flex gap-2">
+            <NCTGraphiteStack direction="row" gap={8}>
               <button onClick={()=>{ cellsRef.current.forEach(c=>c.active=false); }} className="flex-1 h-[34px] rounded-[8px] bg-[#1a1a24] border border-[#23232f] text-[10px] font-bold text-[#7a7680] hover:text-white">CLEAR ALL (X)</button>
               <button onClick={exportSVG} className="flex-1 h-[34px] rounded-[8px] bg-[#7c5cff] text-white text-[10px] font-bold">EXPORT SVG</button>
-            </div>
+            </NCTGraphiteStack>
           </div>
         </aside>
 
@@ -804,11 +767,11 @@ export default function App(){
               )}
               {/* held indicator */}
               {heldActions.size>0 && (
-                <div className="pointer-events-none absolute left-3 top-3 flex gap-1.5">
+                <NCTGraphiteStack direction="row" gap={6} className="pointer-events-none absolute left-3 top-3">
                   {Array.from(heldActions).map(a=>(
                     <span key={a} className="px-2 py-1 rounded-full bg-[#7c5cff] text-white text-[10px] font-bold tracking-[0.1em]">{ACTIONS_LABEL[a]?.label || a}</span>
                   ))}
-                </div>
+                </NCTGraphiteStack>
               )}
             </div>
 
@@ -830,42 +793,24 @@ export default function App(){
           <div className="p-4 border-b border-[#1a1a24] space-y-4">
             <div className="text-[11px] tracking-[0.18em] text-[#7a7680]">GRID / RENDER</div>
             <div className="space-y-3">
-              <div>
-                <div className="flex justify-between text-[10px] mb-1"><span className="text-[#7a7680]">HEX SIZE</span><span className="text-white">{hexSize}px</span></div>
-                <input type="range" min={12} max={48} value={hexSize} onChange={e=>setHexSize(parseInt(e.target.value))} className="w-full accent-[#7c5cff]"/>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <div className="flex justify-between text-[10px] mb-1"><span className="text-[#7a7680]">COLS</span><span className="text-white">{cols}</span></div>
-                  <input type="range" min={12} max={40} value={cols} onChange={e=>setCols(parseInt(e.target.value))} className="w-full accent-[#7c5cff]"/>
-                </div>
-                <div>
-                  <div className="flex justify-between text-[10px] mb-1"><span className="text-[#7a7680]">ROWS</span><span className="text-white">{rows}</span></div>
-                  <input type="range" min={10} max={30} value={rows} onChange={e=>setRows(parseInt(e.target.value))} className="w-full accent-[#7c5cff]"/>
-                </div>
-              </div>
-              <div>
-                <div className="flex justify-between text-[10px] mb-1"><span className="text-[#7a7680]">BRUSH FALLOFF (soft edge)</span><span className="text-white">{falloff.toFixed(2)}</span></div>
-                <input type="range" min={0} max={1} step={0.05} value={falloff} onChange={e=>setFalloff(parseFloat(e.target.value))} className="w-full accent-[#00e5ff]"/>
+              <NCTGraphiteSlider label="HEX SIZE" value={hexSize} min={12} max={48} format={(v)=>`${Math.round(v)}px`} onChange={(v)=>setHexSize(Math.round(v))} />
+              <NCTGraphiteGrid columns="repeat(2, 1fr)" gap={8}>
+                <NCTGraphiteSlider label="COLS" value={cols} min={12} max={40} format={(v)=>`${Math.round(v)}`} onChange={(v)=>setCols(Math.round(v))} />
+                <NCTGraphiteSlider label="ROWS" value={rows} min={10} max={30} format={(v)=>`${Math.round(v)}`} onChange={(v)=>setRows(Math.round(v))} />
+              </NCTGraphiteGrid>
+              <NCTGraphiteSlider label="BRUSH FALLOFF (soft edge)" value={falloff} min={0} max={1} step={0.05} format={(v)=>v.toFixed(2)} onChange={setFalloff} />
                 <div className="text-[9px] text-[#5a5860] mt-1">0 = hard cut, 1 = fade by distance • thresh {">"}0.1</div>
-              </div>
             </div>
           </div>
 
           <div className="p-4 border-b border-[#1a1a24] space-y-2">
-            <label className="flex items-center justify-between p-2 rounded-[8px] bg-[#15151e] border border-[#23232f] cursor-pointer">
-              <span className="text-[11px] text-[#ece9e3]">Show Centers</span>
-              <input type="checkbox" checked={showCenters} onChange={e=>setShowCenters(e.target.checked)} className="accent-[#7c5cff]"/>
-            </label>
-            <label className="flex items-center justify-between p-2 rounded-[8px] bg-[#15151e] border border-[#23232f] cursor-pointer">
-              <span className="text-[11px] text-[#ece9e3]">Show Grid Lines</span>
-              <input type="checkbox" checked={showGridLines} onChange={e=>setShowGridLines(e.target.checked)} className="accent-[#7c5cff]"/>
-            </label>
+            <NCTGraphiteToggle label="Show Centers" checked={showCenters} onChange={setShowCenters} />
+            <NCTGraphiteToggle label="Show Grid Lines" checked={showGridLines} onChange={setShowGridLines} />
           </div>
 
           <div className="p-4 border-b border-[#1a1a24]">
             <div className="text-[11px] tracking-[0.18em] text-[#7a7680] mb-3">STATS / BRUSH</div>
-            <div className="grid grid-cols-2 gap-2 text-[10px]">
+            <NCTGraphiteGrid columns="repeat(2, 1fr)" gap={8} className="text-[10px]">
               <div className="p-2.5 rounded-[8px] bg-[#15151e] border border-[#23232f]">
                 <div className="text-[#7a7680]">TOTAL CELLS</div>
                 <div className="text-[16px] font-bold text-white mt-1">{cellsRef.current.length}</div>
@@ -882,7 +827,7 @@ export default function App(){
                 <div className="text-[#7deeff]">IN BRUSH</div>
                 <div className="text-[16px] font-bold text-[#00e5ff] mt-1">{previewCount}</div>
               </div>
-            </div>
+            </NCTGraphiteGrid>
           </div>
 
           <div className="p-4 border-b border-[#1a1a24]">
@@ -895,20 +840,20 @@ export default function App(){
               {groupedStats.map(([gIdx,count])=>{
                 const col = PALETTE[gIdx % PALETTE.length];
                 return (
-                  <div key={gIdx} className="flex items-center justify-between p-2 rounded-[8px] bg-[#15151e] border border-[#23232f]">
-                    <div className="flex items-center gap-2">
+                  <NCTGraphiteStack direction="row" justify="between" align="center" className="p-2 rounded-[8px] bg-[#15151e] border border-[#23232f]">
+                    <NCTGraphiteStack direction="row" align="center" gap={8}>
                       <div className="w-4 h-4 rounded-[4px]" style={{background:col}}/>
                       <span className="text-[11px] text-white">{col}</span>
                       <span className="text-[10px] text-[#7a7680]">g{gIdx}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
+                    </NCTGraphiteStack>
+                    <NCTGraphiteStack direction="row" align="center" gap={8}>
                       <span className="text-[11px] font-bold text-white">{count}</span>
                       <button onClick={()=>{
                         cellsRef.current.forEach(c=>{ if(c.group===gIdx) c.active=false; });
                         setGroupsUsed(g=>g.filter(x=>x!==gIdx));
                       }} className="w-5 h-5 grid place-items-center rounded bg-[#1a1a24] text-[#7a7680] hover:text-[#ff4d6d]">×</button>
-                    </div>
-                  </div>
+                    </NCTGraphiteStack>
+                  </NCTGraphiteStack>
                 );
               })}
             </div>
@@ -921,12 +866,12 @@ export default function App(){
               {/* Persistent save section - required for records.create */}
               <div className="p-3 rounded-[10px] bg-[#15151e] border border-[#2a2a3a]">
                 <div className="text-[10px] font-bold tracking-[0.14em] text-[#ece9e3] mb-2">SAVE LAB (PERSISTENT)</div>
-                <div className="flex gap-2">
+                <NCTGraphiteStack direction="row" gap={8}>
                   <input value={labName} onChange={e=>setLabName(e.target.value)} placeholder="Lab name (optional)" className="flex-1 h-[34px] px-3 rounded-[8px] bg-[#0e0e14] border border-[#23232f] text-[11px] text-white placeholder:text-[#5a5860] outline-none"/>
                   <button onClick={saveCurrentLab} disabled={savingLab} className="h-[34px] px-4 rounded-[8px] bg-[#7c5cff] text-white text-[11px] font-bold disabled:opacity-50">
                     {savingLab ? "SAVING..." : "SAVE"}
                   </button>
-                </div>
+                </NCTGraphiteStack>
                 {labError && <div className="mt-2 text-[10px] text-[#ff4d6d]">{labError}</div>}
                 <div className="mt-2 text-[9px] text-[#5a5860]">Saves active cells to backend via records.create. Max 340 cells per save (16KiB limit).</div>
               </div>
@@ -945,10 +890,10 @@ export default function App(){
                       <div className="text-[11px] text-white truncate">{rec.value?.name || rec.id.slice(0,8)}</div>
                       <div className="text-[9px] text-[#7a7680]">{rec.value?.totalActive||rec.value?.active?.length||0} cells • {rec.value?.gridType} • {new Date(rec.value?.createdAt||rec.created_at).toLocaleTimeString()}</div>
                     </div>
-                    <div className="flex gap-1">
+                    <NCTGraphiteStack direction="row" gap={4}>
                       <button onClick={()=>loadLab(rec)} className="px-2 py-1 rounded bg-[#ece9e3] text-black text-[10px] font-bold">LOAD</button>
                       <button onClick={()=>deleteLab(rec.id)} className="px-1.5 py-1 rounded bg-[#1a1a24] border border-[#23232f] text-[#7a7680] text-[10px]">×</button>
-                    </div>
+                    </NCTGraphiteStack>
                   </div>
                 ))}
               </div>
@@ -962,17 +907,17 @@ export default function App(){
             </div>
           </div>
         </aside>
-      </div>
+      </NCTGraphiteGrid>
 
       <footer className="border-t border-[#23232f] bg-[#0e0e14] h-[28px] flex items-center px-4 text-[10px] text-[#5a5860] justify-between">
-        <div className="flex gap-4">
+        <NCTGraphiteStack direction="row" gap={16}>
           <span className="hidden md:inline">axial q,r → pixel • distance center test • records.list / create persisted</span>
           <span className="text-[#7a7680]">{gridType} • {hexSize}px • {activeCount}/{cellsRef.current.length} active • {((activeCount/cellsRef.current.length)*100||0).toFixed(1)}%</span>
-        </div>
-        <div className="flex gap-3">
+        </NCTGraphiteStack>
+        <NCTGraphiteStack direction="row" gap={12}>
           <span>JetBrains Mono</span>
           <span className="px-1.5 py-[1px] rounded bg-[#1a1a24] border border-[#23232f] text-[#7a7680]">PAPER #fdfaf3</span>
-        </div>
+        </NCTGraphiteStack>
       </footer>
 
       <style>{`@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap'); *{font-family:"JetBrains Mono", monospace} @keyframes pop{0%{transform:translate(-50%,-6px) scale(0.96)}100%{transform:translate(-50%,0) scale(1)}}`}</style>

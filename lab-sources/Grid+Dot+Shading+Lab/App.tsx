@@ -1,4 +1,19 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { NCTGraphiteSlider, NCTGraphiteStack, NCTGraphiteGrid, useNCTGraphiteCommands } from "@nct/nctgraphite";
+import type { NCTGraphiteCommandDef } from "@nct/nctgraphite";
+
+const SHADING_COMMANDS: NCTGraphiteCommandDef[] = [
+  { id: "f", label: "GROW", desc: "increase dot gain", defaultKey: "f" },
+  { id: "e", label: "SHRINK", desc: "decrease dot gain", defaultKey: "e" },
+  { id: "q", label: "SMOOTH", desc: "avg with neighbors", defaultKey: "q" },
+  { id: "x", label: "CLEAR", desc: "reset to 1px in brush", defaultKey: "x" },
+  { id: "[", label: "RADIUS", desc: "shrink brush", defaultKey: "[" },
+  { id: "]", label: "RADIUS", desc: "grow brush", defaultKey: "]" },
+  { id: "-", label: "INTENSITY", desc: "lower gain speed", defaultKey: "-", aliases: ["_"] },
+  { id: "=", label: "INTENSITY", desc: "raise gain speed", defaultKey: "=", aliases: ["+"] },
+  { id: "c", label: "NEW SHAPE", desc: "cycle shape", defaultKey: "c" },
+  { id: "r", label: "RE-JITTER", desc: "re-randomize positions", defaultKey: "r" },
+];
 
 type ShapeType = "Circle" | "Diamond" | "Square" | "Triangle" | "Line" | "Cross" | "Plus";
 type FalloffType = "Linear" | "Smoothstep" | "Gaussian" | "Sharp";
@@ -53,8 +68,36 @@ export default function App(){
   
   const brushRef = useRef({ x: CANVAS_W/2, y: CANVAS_H/2, lastX: CANVAS_W/2, lastY: CANVAS_H/2, angle: 0, moving: false });
   const keysHeldRef = useRef<Set<string>>(new Set());
-  const [keysHeld,setKeysHeld] = useState<Set<string>>(new Set());
   const [activeAction,setActiveAction] = useState<string | null>(null);
+  const { heldActions: keysHeld } = useNCTGraphiteCommands({
+    commands: SHADING_COMMANDS,
+    preventDefaultKeys: ["f", "e", "q", "x"],
+    onAction: (id) => {
+      if (id === "f") setActiveAction("GROW");
+      if (id === "e") setActiveAction("SHRINK");
+      if (id === "q") setActiveAction("SMOOTH");
+      if (id === "x") setActiveAction("CLEAR");
+      if (id === "[") setBrushRadius((v) => Math.max(20, v - 8));
+      if (id === "]") setBrushRadius((v) => Math.min(240, v + 8));
+      if (id === "-") setIntensity((v) => Math.max(0.1, v - 0.1));
+      if (id === "=") setIntensity((v) => Math.min(3, v + 0.1));
+      if (id === "c") {
+        setShapeType((prev) => {
+          const idx = SHAPES.indexOf(prev);
+          return SHAPES[(idx + 1) % SHAPES.length];
+        });
+        setToast(`Shape → ${shapeType}`);
+        setTimeout(() => setToast(null), 1200);
+      }
+      if (id === "r") {
+        generatePoints();
+        setToast("Re-jittered grid");
+        setTimeout(() => setToast(null), 1000);
+      }
+    },
+    onKeyUp: () => setActiveAction(null),
+  });
+  useEffect(() => { keysHeldRef.current = keysHeld; }, [keysHeld]);
   const [toast,setToast] = useState<string|null>(null);
   const [pointsInBrush,setPointsInBrush] = useState(0);
   const [avgRadius,setAvgRadius] = useState(1);
@@ -553,61 +596,7 @@ export default function App(){
     brushRef.current.y = y;
   };
 
-  useEffect(()=>{
-    const down = (e: KeyboardEvent)=>{
-      const k = e.key.toLowerCase();
-      if(["f","e","q","x","c","r","[","]","-","=","+"].includes(k) || e.key==="[" || e.key==="]" || e.key==="-" || e.key==="="){
-        if(k==="f"||k==="e"||k==="q"||k==="x") e.preventDefault();
-      }
-      const held = keysHeldRef.current;
-      if(!held.has(k)){
-        held.add(k);
-        setKeysHeld(new Set(held));
-      }
-      if(k==="f") setActiveAction("GROW");
-      if(k==="e") setActiveAction("SHRINK");
-      if(k==="q") setActiveAction("SMOOTH");
-      if(k==="x") setActiveAction("CLEAR");
-      
-      if(k==="[" ){
-        setBrushRadius(v=> Math.max(20, v-8));
-      }
-      if(k==="]"){
-        setBrushRadius(v=> Math.min(240, v+8));
-      }
-      if(k==="-" || k==="_"){
-        setIntensity(v=> Math.max(0.1, v-0.1));
-      }
-      if(k==="=" || k==="+"){
-        setIntensity(v=> Math.min(3, v+0.1));
-      }
-      if(k==="c"){
-        setShapeType(prev=>{
-          const idx = SHAPES.indexOf(prev);
-          return SHAPES[(idx+1)%SHAPES.length];
-        });
-        setToast(`Shape → ${shapeType}`);
-        setTimeout(()=>setToast(null),1200);
-      }
-      if(k==="r"){
-        generatePoints();
-        setToast("Re-jittered grid");
-        setTimeout(()=>setToast(null),1000);
-      }
-    };
-    const up = (e: KeyboardEvent)=>{
-      const k = e.key.toLowerCase();
-      const held = keysHeldRef.current;
-      held.delete(k);
-      held.delete(e.key);
-      held.delete(e.key.toLowerCase());
-      setKeysHeld(new Set(held));
-      setActiveAction(null);
-    };
-    window.addEventListener("keydown",down);
-    window.addEventListener("keyup",up);
-    return ()=>{window.removeEventListener("keydown",down); window.removeEventListener("keyup",up);}
-  },[generatePoints,shapeType]);
+  // Keyboard handling lives in useNCTGraphiteCommands (SHADING_COMMANDS above).
 
   const handleCanvasMouseDown = ()=>{
     setToast("Mouse aims — keys shade");
@@ -697,7 +686,7 @@ export default function App(){
         </div>
       </div>
 
-      <div className="mx-auto max-w-[1600px] px-3 md:px-4 py-3 md:py-4 grid grid-cols-1 lg:grid-cols-[220px_1fr_300px] gap-3">
+      <NCTGraphiteGrid columns="1fr" wideMinWidth={1024} wideTemplate="220px 1fr 300px" gap={12} className="mx-auto max-w-[1600px] px-3 md:px-4 py-3 md:py-4">
         {/* Left keymap */}
         <div className="order-2 lg:order-1">
           <div className="rounded-[18px] bg-[var(--panel)] text-[#fdfaf3] p-3 md:p-4 lg:sticky lg:top-[66px]">
@@ -728,11 +717,11 @@ export default function App(){
                 Grid points hold a <span className="text-[#7c5cff]">gain</span>. Brush circle has falloff <span className="text-[#00e5ff]">(1-d/R)^p</span> — strongest at center. Jittered positions turn uniform dots into organic stipple halftone. Line/diamond shapes expose rotation.
               </div>
             </div>
-            <div className="mt-3 flex gap-2">
+            <NCTGraphiteStack direction="row" gap={8} className="mt-3">
               <div className={`flex-1 h-[36px] rounded-full grid place-items-center mono text-[11px] font-bold transition ${activeAction? "bg-[#00e5ff] text-black" : "bg-white/10 text-white/50"}`}>
                 {activeAction? `● ${activeAction}` : "IDLE — MOVE MOUSE"}
               </div>
-            </div>
+            </NCTGraphiteStack>
             <div className="mt-3 mono text-[9px] opacity-40 leading-[1.3]">
               Tip: hold F + move slowly for smooth gradients. Use E to carve highlights. Q smudges. Lines + Brush Direction = hatching.
             </div>
@@ -745,7 +734,7 @@ export default function App(){
             <div className="relative w-full aspect-[960/680] bg-[#fdfaf3]">
               <canvas ref={canvasRef} width={CANVAS_W} height={CANVAS_H} className="absolute inset-0 w-full h-full" />
               <canvas ref={overlayRef} width={CANVAS_W} height={CANVAS_H} className="absolute inset-0 w-full h-full pointer-events-none" />
-              <div className="absolute left-3 top-3 flex gap-2 mono text-[10px]">
+              <NCTGraphiteStack direction="row" gap={8} className="absolute left-3 top-3 mono text-[10px]">
                 <div className="px-2.5 py-1 rounded-full bg-[#0e0e14] text-white flex items-center gap-1.5">
                   <span className="h-1.5 w-1.5 rounded-full bg-[#7c5cff]"/>
                   {pointsInBrush} in brush
@@ -753,7 +742,7 @@ export default function App(){
                 <div className="px-2.5 py-1 rounded-full bg-white border border-black/10 text-black">
                   {shapeType} • {rotationMode}
                 </div>
-              </div>
+              </NCTGraphiteStack>
               <div className="absolute right-3 top-3 mono text-[10px] px-2.5 py-1 rounded-full bg-[#7c5cff] text-white">
                 {brushRef.current.x.toFixed(0)}, {brushRef.current.y.toFixed(0)}
               </div>
@@ -780,7 +769,7 @@ export default function App(){
             </div>
           </div>
 
-          <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-2 mono text-[10px]">
+          <NCTGraphiteGrid columns="repeat(2, 1fr)" wideMinWidth={768} wideColumns="repeat(4, 1fr)" gap={8} className="mt-3 mono text-[10px]">
             <div className="rounded-[14px] border border-black/10 bg-white p-3">
               <div className="opacity-50 tracking-wide">TOTAL POINTS</div>
               <div className="text-[18px] font-bold leading-none mt-1">{totalPoints}</div>
@@ -800,7 +789,7 @@ export default function App(){
               </div>
               <div className="h-7 w-7 rounded-full bg-[#7c5cff] grid place-items-center text-[12px]">✦</div>
             </div>
-          </div>
+          </NCTGraphiteGrid>
         </div>
 
         {/* Right controls */}
@@ -813,10 +802,10 @@ export default function App(){
                 <div className="mono text-[9px] opacity-50">{presets.length} / 1000</div>
               </div>
               <div className="mt-3 bg-[#1a1a24] border border-white/10 rounded-[12px] p-2.5">
-                <div className="flex gap-2">
+                <NCTGraphiteStack direction="row" gap={8}>
                   <input value={presetName} onChange={e=>setPresetName(e.target.value)} placeholder="Name (optional)" className="flex-1 h-8 px-3 rounded-full bg-[#0e0e14] border border-white/10 mono text-[11px] text-white placeholder:text-white/30 outline-none focus:border-[#7c5cff]" />
                   <button disabled={saving} onClick={savePreset} className="px-4 h-8 rounded-full bg-[#fdfaf3] text-black mono text-[11px] font-bold hover:bg-white disabled:opacity-50 transition">{saving? "Saving...":"Save"}</button>
-                </div>
+                </NCTGraphiteStack>
                 {presetsError && <div className="mono text-[10px] text-[#ff5c7a] mt-2">{presetsError}</div>}
                 <div className="mt-3 max-h-[160px] overflow-y-auto space-y-1.5 pr-1">
                   {presets.length===0 && <div className="mono text-[10px] opacity-40 py-2">No saved presets yet. Current brush + grid + shape will be stored.</div>}
@@ -839,51 +828,34 @@ export default function App(){
                 <div className="mono text-[10px] tracking-[0.18em] opacity-60">GRID</div>
                 <button onClick={()=>generatePoints()} className="mono text-[10px] px-2.5 py-1 rounded-full bg-white text-black font-bold hover:bg-[#7c5cff] hover:text-white transition">Re-jitter [R]</button>
               </div>
-              <div className="mt-3 grid grid-cols-2 gap-2">
-                <label className="bg-[#1a1a24] border border-white/10 rounded-[12px] p-2.5">
-                  <div className="mono text-[9px] opacity-50">COLS {cols}</div>
-                  <input type="range" min={20} max={80} value={cols} onChange={e=>setCols(parseInt(e.target.value))} className="w-full accent-[#7c5cff] mt-1"/>
-                </label>
-                <label className="bg-[#1a1a24] border border-white/10 rounded-[12px] p-2.5">
-                  <div className="mono text-[9px] opacity-50">ROWS {rows}</div>
-                  <input type="range" min={15} max={60} value={rows} onChange={e=>setRows(parseInt(e.target.value))} className="w-full accent-[#7c5cff] mt-1"/>
-                </label>
-              </div>
-              <label className="mt-2 block bg-[#1a1a24] border border-white/10 rounded-[12px] p-2.5">
-                <div className="flex justify-between mono text-[9px] opacity-50"><span>JITTER {(jitterAmount*100).toFixed(0)}%</span><span>{useJitter?"ON":"OFF"}</span></div>
-                <input type="range" min={0} max={1} step={0.01} value={jitterAmount} onChange={e=>setJitterAmount(parseFloat(e.target.value))} className="w-full accent-[#7c5cff] mt-1"/>
-                <div className="flex gap-2 mt-2">
-                  <button onClick={()=>setUseJitter(v=>!v)} className={`flex-1 h-7 rounded-full mono text-[10px] font-bold ${useJitter?"bg-[#7c5cff] text-white":"bg-white/10 text-white/60"}`}>{useJitter?"RANDOMIZED":"ALIGNED GRID"}</button>
-                  <button onClick={()=>setShowGrid(v=>!v)} className={`px-3 h-7 rounded-full mono text-[10px] font-bold ${showGrid?"bg-[#00e5ff] text-black":"bg-white/10 text-white/60"}`}>GRID LINES</button>
-                </div>
-              </label>
+              <NCTGraphiteGrid columns="repeat(2, 1fr)" gap={8} className="mt-3">
+                <NCTGraphiteSlider label="COLS" value={cols} min={20} max={80} format={(v)=>`${Math.round(v)}`} onChange={(v)=>setCols(Math.round(v))} />
+                <NCTGraphiteSlider label="ROWS" value={rows} min={15} max={60} format={(v)=>`${Math.round(v)}`} onChange={(v)=>setRows(Math.round(v))} />
+              </NCTGraphiteGrid>
+              <NCTGraphiteSlider label="JITTER" value={jitterAmount} min={0} max={1} step={0.01} format={(v)=>`${(v*100).toFixed(0)}%`} onChange={setJitterAmount} />
+              <NCTGraphiteStack direction="row" gap={8} className="mt-2">
+                <button onClick={()=>setUseJitter(v=>!v)} className={`flex-1 h-7 rounded-full mono text-[10px] font-bold ${useJitter?"bg-[#7c5cff] text-white":"bg-white/10 text-white/60"}`}>{useJitter?"RANDOMIZED":"ALIGNED GRID"}</button>
+                <button onClick={()=>setShowGrid(v=>!v)} className={`px-3 h-7 rounded-full mono text-[10px] font-bold ${showGrid?"bg-[#00e5ff] text-black":"bg-white/10 text-white/60"}`}>GRID LINES</button>
+              </NCTGraphiteStack>
             </div>
 
             {/* Brush */}
             <div>
               <div className="mono text-[10px] tracking-[0.18em] opacity-60">BRUSH</div>
               <div className="mt-3 space-y-2">
+                <NCTGraphiteSlider label="RADIUS [ ]" value={brushRadius} min={20} max={240} format={(v)=>`${Math.round(v)}px`} onChange={(v)=>setBrushRadius(Math.round(v))} />
+                <NCTGraphiteSlider label="INTENSITY - =" value={intensity} min={0.1} max={3} step={0.1} format={(v)=>`${v.toFixed(1)}x`} onChange={setIntensity} />
                 <div className="bg-[#1a1a24] border border-white/10 rounded-[12px] p-2.5">
-                  <div className="flex justify-between mono text-[9px] opacity-50"><span>RADIUS [ ]</span><span>{brushRadius}px</span></div>
-                  <input type="range" min={20} max={240} value={brushRadius} onChange={e=>setBrushRadius(parseInt(e.target.value))} className="w-full accent-[#7c5cff] mt-1"/>
-                  <div className="flex justify-between mono text-[9px] opacity-50 mt-2"><span>INTENSITY - =</span><span>{intensity.toFixed(1)}x</span></div>
-                  <input type="range" min={0.1} max={3} step={0.1} value={intensity} onChange={e=>setIntensity(parseFloat(e.target.value))} className="w-full accent-[#00e5ff] mt-1"/>
-                </div>
-                <div className="bg-[#1a1a24] border border-white/10 rounded-[12px] p-2.5">
-                  <div className="flex justify-between items-center">
-                    <div className="mono text-[9px] opacity-50">FALLOFF POWER</div>
-                    <div className="mono text-[10px] font-bold">{falloffPower.toFixed(1)}</div>
-                  </div>
-                  <input type="range" min={0.5} max={4} step={0.1} value={falloffPower} onChange={e=>setFalloffPower(parseFloat(e.target.value))} className="w-full accent-[#7c5cff] mt-1"/>
-                  <div className="mt-2 flex gap-1.5 flex-wrap">
+                  <NCTGraphiteSlider label="FALLOFF POWER" value={falloffPower} min={0.5} max={4} step={0.1} format={(v)=>v.toFixed(1)} onChange={setFalloffPower} />
+                  <NCTGraphiteStack direction="row" gap={6} wrap className="mt-2">
                     {FALLOFFS.map(f=>(
                       <button key={f} onClick={()=>setFalloffType(f)} className={`px-2.5 py-1 rounded-full mono text-[10px] border ${falloffType===f?"bg-[#7c5cff] border-[#7c5cff] text-white":"bg-transparent border-white/15 text-white/60 hover:border-white/30"}`}>{f}</button>
                     ))}
-                  </div>
-                  <div className="mt-2.5 flex gap-2 items-center">
+                  </NCTGraphiteStack>
+                  <NCTGraphiteStack direction="row" gap={8} align="center" className="mt-2.5">
                     <canvas ref={curveRef} width={80} height={40} className="rounded-[6px] border border-white/10" />
                     <div className="mono text-[9px] leading-[1.2] opacity-60">influence = pow( (1-d/R), p )<br/>center bias = {falloffType==="Gaussian"?"gauss":"pow"}<br/><span className="text-[#00e5ff]">dotted = 50% radius</span></div>
-                  </div>
+                  </NCTGraphiteStack>
                 </div>
               </div>
             </div>
@@ -894,43 +866,36 @@ export default function App(){
               <div className="mt-3 space-y-2">
                 <div className="bg-[#1a1a24] border border-white/10 rounded-[12px] p-2.5">
                   <div className="mono text-[9px] opacity-50 mb-2">SHAPE TYPE [C]</div>
-                  <div className="grid grid-cols-3 gap-1.5">
+                  <NCTGraphiteGrid columns="repeat(3, 1fr)" gap={6}>
                     {SHAPES.map(s=>(
                       <button key={s} onClick={()=>setShapeType(s)} className={`h-8 rounded-[9px] mono text-[10px] font-bold border ${shapeType===s?"bg-[#fdfaf3] text-black border-[#fdfaf3]":"bg-[#0e0e14] border-white/10 text-white/70 hover:border-white/20"}`}>{s}</button>
                     ))}
-                  </div>
-                  <div className="grid grid-cols-3 gap-1.5 mt-2">
+                  </NCTGraphiteGrid>
+                  <NCTGraphiteGrid columns="repeat(3, 1fr)" gap={6} className="mt-2">
                     <button onClick={()=>setFillMode("Fill")} className={`h-7 rounded-full mono text-[10px] ${fillMode==="Fill"?"bg-[#7c5cff] text-white":"bg-white/10 text-white/60"}`}>Fill</button>
                     <button onClick={()=>setFillMode("Stroke")} className={`h-7 rounded-full mono text-[10px] ${fillMode==="Stroke"?"bg-[#7c5cff] text-white":"bg-white/10 text-white/60"}`}>Stroke</button>
                     <button onClick={()=>setColorMode(c=> c==="Mono"?"Density": c==="Density"?"Group":"Mono")} className="h-7 rounded-full mono text-[10px] bg-white/10 text-white/60">{colorMode}</button>
-                  </div>
+                  </NCTGraphiteGrid>
                 </div>
 
-                <div className="bg-[#1a1a24] border border-white/10 rounded-[12px] p-2.5">
-                  <div className="flex justify-between mono text-[9px] opacity-50"><span>MAX GAIN</span><span>{maxRadius}px</span></div>
-                  <input type="range" min={4} max={24} value={maxRadius} onChange={e=>setMaxRadius(parseInt(e.target.value))} className="w-full accent-[#7c5cff] mt-1"/>
-                  <div className="flex justify-between mono text-[9px] opacity-50 mt-1"><span>MIN GAIN</span><span>{minRadius.toFixed(1)}px</span></div>
-                  <input type="range" min={0.1} max={2} step={0.1} value={minRadius} onChange={e=>setMinRadius(parseFloat(e.target.value))} className="w-full accent-[#7c5cff] mt-1"/>
-                </div>
+                <NCTGraphiteSlider label="MAX GAIN" value={maxRadius} min={4} max={24} format={(v)=>`${Math.round(v)}px`} onChange={(v)=>setMaxRadius(Math.round(v))} />
+                <NCTGraphiteSlider label="MIN GAIN" value={minRadius} min={0.1} max={2} step={0.1} format={(v)=>`${v.toFixed(1)}px`} onChange={setMinRadius} />
 
                 <div className="bg-[#1a1a24] border border-white/10 rounded-[12px] p-2.5">
                   <div className="mono text-[9px] opacity-50 mb-2">ROTATION MODE</div>
-                  <div className="grid grid-cols-2 gap-1.5">
+                  <NCTGraphiteGrid columns="repeat(2, 1fr)" gap={6}>
                     {ROT_MODES.map(m=>(
                       <button key={m} onClick={()=>setRotationMode(m)} className={`h-8 rounded-[9px] mono text-[9px] font-bold leading-[1.1] border px-1 ${rotationMode===m?"bg-[#00e5ff] text-black border-[#00e5ff]":"bg-[#0e0e14] border-white/10 text-white/70"}`}>{m}</button>
                     ))}
-                  </div>
-                  <div className="mt-2">
-                    <div className="flex justify-between mono text-[9px] opacity-50"><span>ROT JITTER</span><span>{rotationJitter}°</span></div>
-                    <input type="range" min={0} max={180} value={rotationJitter} onChange={e=>setRotationJitter(parseInt(e.target.value))} className="w-full accent-[#00e5ff] mt-1"/>
-                  </div>
+                  </NCTGraphiteGrid>
+                  <NCTGraphiteSlider label="ROT JITTER" value={rotationJitter} min={0} max={180} format={(v)=>`${Math.round(v)}°`} onChange={(v)=>setRotationJitter(Math.round(v))} />
                 </div>
               </div>
             </div>
 
             {/* Stats / Export */}
             <div className="pt-1">
-              <div className="grid grid-cols-2 gap-2 mono text-[10px]">
+              <NCTGraphiteGrid columns="repeat(2, 1fr)" gap={8} className="mono text-[10px]">
                 <div className="rounded-[12px] bg-[#1a1a24] border border-white/10 p-2.5">
                   <div className="opacity-50">BRUSH POS</div>
                   <div className="font-bold mt-1">{brushRef.current.x.toFixed(0)}, {brushRef.current.y.toFixed(0)}</div>
@@ -939,18 +904,18 @@ export default function App(){
                   <div className="opacity-50">AVG RADIUS</div>
                   <div className="font-bold mt-1">{avgRadius.toFixed(2)}px</div>
                 </div>
-              </div>
-              <div className="mt-2 flex gap-2">
+              </NCTGraphiteGrid>
+              <NCTGraphiteStack direction="row" gap={8} className="mt-2">
                 <button onClick={exportSVG} className="flex-1 h-9 rounded-full bg-[#fdfaf3] text-black mono text-[11px] font-bold hover:bg-white transition">Export SVG</button>
                 <button onClick={exportPNG} className="flex-1 h-9 rounded-full bg-[#7c5cff] text-white mono text-[11px] font-bold hover:bg-[#6d4fff] transition">Export PNG</button>
-              </div>
+              </NCTGraphiteStack>
               <div className="mt-3 mono text-[9px] opacity-30 leading-[1.3]">
                 Export bakes current jitter, gain, rotation. SVG preserves vector shapes. Presets are durable via trusted backend.
               </div>
             </div>
           </div>
         </div>
-      </div>
+      </NCTGraphiteGrid>
 
       <style>{`
         @keyframes bounce{0%{transform:translate(-50%,10px) scale(0.96); opacity:0} 100%{transform:translate(-50%,0) scale(1); opacity:1}}

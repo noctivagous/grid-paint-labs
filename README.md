@@ -7,9 +7,25 @@ Mouse aims, keys act: the cursor positions, but only
 holding a key deposits anything. Open either file in a
 browser — no backend, no build step.
 
+## App switcher
+
+[index.html](index.html)
+loads any lab from [lab-sources/](lab-sources)
+(Hull, Dot Shading, Hex Paint) into one page: pick a lab
+in the top bar, or deep-link with `?app=hull`.
+It compiles the `App.tsx` + `index.css` sources live in
+the browser — it does not load the prebuilt files in
+[standalone-html/](standalone-html),
+which are independent static copies.
+Run it with `npm run dev` (serves `index.html` plus the
+lab sources raw via `vite.config.js`), or with
+`python3 -m http.server`; opened via `file://` it asks
+you to pick the folder instead. Needs network for the
+React/Babel/Tailwind CDNs.
+
 ## Artifacts
 
-### [Arc-Metaball-Grid-Lab.html](/Users/jpratt/Developer/grid-paint-labs/Arc-Metaball-Grid-Lab.html)
+### [Arc-Metaball-Grid-Lab.html](standalone-html/Arc-Metaball-Grid-Lab.html)
 
 Arc-metaball playground using the Paper.js "Sato exact"
 method (Hiroyuki Sato, no marching squares). Circles on a
@@ -28,7 +44,7 @@ snappable grid are bridged with arc/bezier neck paths
 - Color groups with a live component list and
   one-click SVG export of the Sato paths.
 
-### [Grid-Paint-Field-Key.html](/Users/jpratt/Developer/grid-paint-labs/Grid-Paint-Field-Key.html)
+### [Grid-Paint-Field-Key.html](standalone-html/Grid-Paint-Field-Key.html)
 
 Vector-field painting lab: move to aim, hold a key to
 paint flows, drop attractors, erase, or smooth.

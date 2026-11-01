@@ -1,0 +1,7 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Tokens, base type, scrollbars, and range chrome now come from
+ * NCTGraphiteTheme.css (NCTTechDesMVD), injected by the lab loader. */
