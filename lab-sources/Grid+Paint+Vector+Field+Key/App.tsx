@@ -4,6 +4,7 @@ import {
   NCTGraphiteAppShell, NCTGraphiteStagePanel, NCTGraphiteStageMain,
   NCTGraphiteStageFooter, NCTGraphiteToggle, NCTGraphiteSegmented, NCTGraphitePanel,
   NCTGraphiteKeyMap, NCTGraphiteDialog, NCTGraphiteToast, useNCTGraphiteCommands,
+  NCTGraphiteButton,
 } from "@nct/nctgraphite";
 import type { NCTGraphiteCommandDef } from "@nct/nctgraphite";
 
@@ -13,6 +14,15 @@ type Attractor = { id: number; x: number; y: number; r: number; orbit: boolean }
 
 const CANVAS_W = 960;
 const CANVAS_H = 680;
+
+const svgIcon = (inner: string) => (
+  <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" dangerouslySetInnerHTML={{ __html: inner }} />
+);
+const HELP_ICON = svgIcon('<circle cx="8" cy="8" r="6.2"/><path d="M6.2 6.2c.2-1 1-1.6 1.9-1.6 1 0 1.9.7 1.9 1.7 0 1.2-1.2 1.4-1.9 2.1v.7"/><circle cx="8.1" cy="11.6" r="0.4" fill="currentColor" stroke="none"/>');
+const CLOSE_ICON = svgIcon('<path d="M3.5 3.5l9 9M12.5 3.5l-9 9"/>');
+const DOWNLOAD_ICON = svgIcon('<path d="M8 2v8M4.8 7.2L8 10.4l3.2-3.2"/><path d="M3 12.5h10"/>');
+const UPLOAD_ICON = svgIcon('<path d="M8 10.4V2.4M4.8 5.6L8 2.4l3.2 3.2"/><path d="M3 12.5h10"/>');
+const TRASH_ICON = svgIcon('<path d="M3 4.5h10M6.5 4.5V3h3v1.5"/><path d="M4.5 4.5l.7 8.5h5.6l.7-8.5"/><path d="M6.8 7v4M9.2 7v4"/>');
 
 const VECTOR_COMMANDS: NCTGraphiteCommandDef[] = [
   { id: "paint", label: "Paint / Flow", desc: "Stamp flow in brush", defaultKey: "f" },
@@ -458,12 +468,12 @@ export default function App() {
         <span className="text-[10px] tracking-widest text-[#9a958c]">
           {liveCount} LIVE • {attractors.length} ATTRACTORS • AVG {energy.toFixed(2)}
         </span>
-        <button
+        <NCTGraphiteButton
+          label="? HELP"
+          icon={HELP_ICON}
           onClick={() => setHelpOpen(true)}
-          className="ml-auto px-2 py-1 rounded-[7px] bg-[#1a1a24] border border-[#23232f] text-[11px] font-bold text-[#7a7680] hover:text-white"
-        >
-          ? HELP
-        </button>
+          className="ml-auto px-2 py-1 rounded-[7px] text-[#7a7680] hover:text-white"
+        />
       </header>
 
       <NCTGraphiteDialog open={helpOpen} onClose={() => setHelpOpen(false)} title="? HELP — KEY-CLICK PHILOSOPHY">
@@ -487,12 +497,12 @@ export default function App() {
               <span className="text-[#00e5ff] font-bold">TIP:</span> Use VELOCITY mode + fast mouse moves to paint streams. Drop attractors with N to make sinks.
             </p>
           </div>
-          <button
+          <NCTGraphiteButton
+            label="CLOSE — BACK TO PAINT"
+            icon={CLOSE_ICON}
             onClick={() => setHelpOpen(false)}
-            className="py-2.5 text-[11px] bg-[#00e5ff] text-black rounded-[8px] font-bold"
-          >
-            CLOSE — BACK TO PAINT
-          </button>
+            className="py-2.5 rounded-[8px] bg-[#00e5ff] border-[#00e5ff] text-black"
+          />
         </div>
       </NCTGraphiteDialog>
       </>}
@@ -510,13 +520,13 @@ export default function App() {
           </NCTGraphitePanel>
           <NCTGraphiteKeyMap commands={REST_COMMANDS} keyMap={keyMap} rebinding={rebinding} onRebind={beginRebind} heldActions={heldActions} />
           <NCTGraphiteStack direction="row" gap={8}>
-            <button onClick={exportJSON} className="flex-1 py-2 text-[11px] bg-[#1a1a24] hover:bg-[#222230] rounded font-bold border border-[#23232f]">EXPORT JSON</button>
-            <label className="flex-1 py-2 text-[11px] bg-[#1a1a24] hover:bg-[#222230] rounded font-bold border border-[#23232f] text-center cursor-pointer">
-              IMPORT
+            <NCTGraphiteButton label="EXPORT JSON" icon={DOWNLOAD_ICON} onClick={exportJSON} className="flex-1" />
+            <label className="flex-1 inline-flex items-center justify-center gap-[6px] py-2 px-3 text-[11px] bg-[#1a1a24] hover:bg-[#222230] rounded font-bold border border-[#23232f] text-center cursor-pointer">
+              {UPLOAD_ICON}<span>IMPORT</span>
               <input type="file" accept="application/json" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) importJSON(f); e.target.value = ""; }} />
             </label>
           </NCTGraphiteStack>
-          <button onClick={clearAll} className="py-2 text-[11px] bg-[#1a1a24] hover:bg-[#222230] rounded font-bold border border-[#23232f]">CLEAR ALL (CONFIRM)</button>
+          <NCTGraphiteButton label="CLEAR ALL (CONFIRM)" icon={TRASH_ICON} onClick={clearAll} className="w-full" />
         </NCTGraphiteStagePanel>
 
         <NCTGraphiteStageMain className="items-center bg-[#14141d] p-2 md:p-4 gap-3">

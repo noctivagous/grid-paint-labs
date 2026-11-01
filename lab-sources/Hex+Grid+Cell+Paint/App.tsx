@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from "react";
-import { NCTGraphiteSlider, NCTGraphiteStack, NCTGraphiteGrid, NCTGraphiteAppShell, NCTGraphiteToggle, useNCTGraphiteCommands } from "@nct/nctgraphite";
+import { NCTGraphiteSlider, NCTGraphiteStack, NCTGraphiteGrid, NCTGraphiteAppShell, NCTGraphiteToggle, NCTGraphiteButton, useNCTGraphiteCommands } from "@nct/nctgraphite";
 import type { NCTGraphiteCommandDef } from "@nct/nctgraphite";
 
 type GridType = "flat" | "pointy" | "square";
@@ -27,6 +27,15 @@ const PALETTE = [
   "#b18aff",
   "#4af0ff",
 ];
+
+const svgIcon = (inner: string) => (
+  <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" dangerouslySetInnerHTML={{ __html: inner }} />
+);
+const TRASH_ICON = svgIcon('<path d="M3 4.5h10M6.5 4.5V3h3v1.5"/><path d="M4.5 4.5l.7 8.5h5.6l.7-8.5"/><path d="M6.8 7v4M9.2 7v4"/>');
+const DOWNLOAD_ICON = svgIcon('<path d="M8 2v8M4.8 7.2L8 10.4l3.2-3.2"/><path d="M3 12.5h10"/>');
+const SAVE_ICON = svgIcon('<path d="M3.5 3.5h8l1 1v8h-9z"/><path d="M5.5 3.5v3h5v-3"/><path d="M5.5 12.5v-4h5v4"/>');
+const REFRESH_ICON = svgIcon('<path d="M13 8a5 5 0 1 1-1.5-3.6"/><path d="M13 1.8v2.6h-2.6"/>');
+const FOLDER_ICON = svgIcon('<path d="M2 4.5c0-.6.4-1 1-1h3l1.2 1.5H13c.6 0 1 .4 1 1v5c0 .6-.4 1-1 1H3c-.6 0-1-.4-1-1z"/>');
 
 const DEFAULT_KEYS: KeyMap = {
   paint: "f",
@@ -736,8 +745,8 @@ export default function App(){
             </NCTGraphiteGrid>
 
             <NCTGraphiteStack direction="row" gap={8}>
-              <button onClick={()=>{ cellsRef.current.forEach(c=>c.active=false); }} className="flex-1 h-[34px] rounded-[8px] bg-[#1a1a24] border border-[#23232f] text-[10px] font-bold text-[#7a7680] hover:text-white">CLEAR ALL (X)</button>
-              <button onClick={exportSVG} className="flex-1 h-[34px] rounded-[8px] bg-[#7c5cff] text-white text-[10px] font-bold">EXPORT SVG</button>
+              <NCTGraphiteButton label="CLEAR ALL (X)" icon={TRASH_ICON} onClick={()=>{ cellsRef.current.forEach(c=>c.active=false); }} className="flex-1 h-[34px] rounded-[8px] text-[10px] text-[#7a7680] hover:text-white" />
+              <NCTGraphiteButton label="EXPORT SVG" icon={DOWNLOAD_ICON} onClick={exportSVG} variant="primary" className="flex-1 h-[34px] rounded-[8px] text-[10px]" />
             </NCTGraphiteStack>
           </div>
         </aside>
@@ -873,18 +882,14 @@ export default function App(){
             </div>
 
             <div className="mt-6 space-y-3">
-              <button onClick={exportSVG} className="w-full h-[42px] rounded-[10px] bg-[#ece9e3] text-[#0e0e14] text-[11px] font-bold tracking-[0.12em] hover:bg-white transition flex items-center justify-center gap-2">
-                <span className="w-5 h-5 rounded bg-[#0e0e14] text-white grid place-items-center text-[10px]">↗</span> EXPORT SVG (BY COLOR)
-              </button>
+              <NCTGraphiteButton label="EXPORT SVG (BY COLOR)" icon={DOWNLOAD_ICON} onClick={exportSVG} className="w-full h-[42px] rounded-[10px] bg-[#ece9e3] border-[#ece9e3] text-[#0e0e14] text-[11px] tracking-[0.12em] hover:bg-white" />
 
               {/* Persistent save section - required for records.create */}
               <div className="p-3 rounded-[10px] bg-[#15151e] border border-[#2a2a3a]">
                 <div className="text-[10px] font-bold tracking-[0.14em] text-[#ece9e3] mb-2">SAVE LAB (PERSISTENT)</div>
                 <NCTGraphiteStack direction="row" gap={8}>
                   <input value={labName} onChange={e=>setLabName(e.target.value)} placeholder="Lab name (optional)" className="flex-1 h-[34px] px-3 rounded-[8px] bg-[#0e0e14] border border-[#23232f] text-[11px] text-white placeholder:text-[#5a5860] outline-none"/>
-                  <button onClick={saveCurrentLab} disabled={savingLab} className="h-[34px] px-4 rounded-[8px] bg-[#7c5cff] text-white text-[11px] font-bold disabled:opacity-50">
-                    {savingLab ? "SAVING..." : "SAVE"}
-                  </button>
+                  <NCTGraphiteButton label={savingLab ? "SAVING..." : "SAVE"} icon={SAVE_ICON} onClick={saveCurrentLab} disabled={savingLab} variant="primary" className="h-[34px] px-4 rounded-[8px]" />
                 </NCTGraphiteStack>
                 {labError && <div className="mt-2 text-[10px] text-[#ff4d6d]">{labError}</div>}
                 <div className="mt-2 text-[9px] text-[#5a5860]">Saves active cells to backend via records.create. Max 340 cells per save (16KiB limit).</div>
@@ -894,7 +899,7 @@ export default function App(){
             <div className="mt-6">
               <div className="flex items-center justify-between mb-2">
                 <div className="text-[11px] tracking-[0.18em] text-[#7a7680]">SAVED LABS</div>
-                <button onClick={reloadLabs} className="text-[9px] px-2 py-1 rounded bg-[#1a1a24] border border-[#23232f] text-[#7a7680] hover:text-white">REFRESH</button>
+                <NCTGraphiteButton label="REFRESH" icon={REFRESH_ICON} onClick={reloadLabs} className="text-[9px] px-2 py-1 rounded" />
               </div>
               <div className="space-y-1.5 max-h-[220px] overflow-y-auto">
                 {savedLabs.length===0 && <div className="text-[10px] text-[#5a5860] p-2 border border-dashed border-[#23232f] rounded-[8px]">No saved labs yet. Paint then SAVE.</div>}
@@ -905,7 +910,7 @@ export default function App(){
                       <div className="text-[9px] text-[#7a7680]">{rec.value?.totalActive||rec.value?.active?.length||0} cells • {rec.value?.gridType} • {new Date(rec.value?.createdAt||rec.created_at).toLocaleTimeString()}</div>
                     </div>
                     <NCTGraphiteStack direction="row" gap={4}>
-                      <button onClick={()=>loadLab(rec)} className="px-2 py-1 rounded bg-[#ece9e3] text-black text-[10px] font-bold">LOAD</button>
+                      <NCTGraphiteButton label="LOAD" icon={FOLDER_ICON} onClick={()=>loadLab(rec)} className="px-2 py-1 rounded bg-[#ece9e3] border-[#ece9e3] text-black text-[10px]" />
                       <button onClick={()=>deleteLab(rec.id)} className="px-1.5 py-1 rounded bg-[#1a1a24] border border-[#23232f] text-[#7a7680] text-[10px]">×</button>
                     </NCTGraphiteStack>
                   </div>

@@ -24,6 +24,7 @@ async function loadProbe() {
       NCTGraphiteSlider, NCTGraphiteSliderMeta,
       NCTGraphiteToggle, NCTGraphiteToggleMeta,
       NCTGraphiteHint, NCTGraphiteHintMeta,
+      NCTGraphiteButton, NCTGraphiteButtonMeta,
     } from ${JSON.stringify(LIB_INDEX)};
     export const metas = {
       keymap: NCTGraphiteKeyMapMeta,
@@ -33,6 +34,7 @@ async function loadProbe() {
       slider: NCTGraphiteSliderMeta,
       toggle: NCTGraphiteToggleMeta,
       hint: NCTGraphiteHintMeta,
+      button: NCTGraphiteButtonMeta,
     };
     const cmds = [
       { id: 'flow', label: 'FLOW', desc: 'paint vector flows', defaultKey: 'f' },
@@ -60,6 +62,12 @@ async function loadProbe() {
         toggleSwitch: renderToString(React.createElement(NCTGraphiteToggle, { label: 'OPT', checked: false, onChange: noop, controlStyle: 'switch' })),
         sliderHint: renderToString(React.createElement(NCTGraphiteSlider, { label: 'GAIN', hint: 'help text', value: 1, min: 0, max: 2, onChange: noop })),
         hintOnly: renderToString(React.createElement(NCTGraphiteHint, { text: 'Tooltip body' })),
+        buttonIcon: renderToString(React.createElement(NCTGraphiteButton, {
+          label: 'EXPORT SVG', onClick: noop,
+          icon: React.createElement('svg', { viewBox: '0 0 16 16', width: 14, height: 14 }),
+        })),
+        buttonPlain: renderToString(React.createElement(NCTGraphiteButton, { label: 'SAVE', onClick: noop })),
+        buttonPrimary: renderToString(React.createElement(NCTGraphiteButton, { label: 'GO', variant: 'primary', onClick: noop })),
       };
     }
   `);
@@ -85,6 +93,8 @@ test('new lab-idiom widgets carry Meta contracts', async () => {
   assert.equal(metas.toggle.tag, 'NCTGraphiteToggle');
   assert.ok(metas.toggle.props.controlStyle.description.includes('"switch"'));
   assert.equal(metas.hint.tag, 'NCTGraphiteHint');
+  assert.equal(metas.button.tag, 'NCTGraphiteButton');
+  assert.equal(metas.button.props.icon.type, 'node');
   assert.ok(metas.slider.props.hint.description.includes('tooltip'));
   assert.ok(metas.keymap.props.heldActions.description.includes('highlight'));
   assert.ok(metas.keymap.props.emphasizeIds.description.includes('accent'));
@@ -106,4 +116,8 @@ test('new lab-idiom widgets render their contracts', async () => {
   assert.ok(out.toggleSwitch.includes('role="switch"') && !out.toggleSwitch.includes('type="checkbox"'));
   assert.ok(out.sliderHint.includes('nctgraphite-hint-trigger') && out.sliderHint.includes('nctgraphite-hint-circle'));
   assert.ok(out.hintOnly.includes('nctgraphite-popover-anchor') && out.hintOnly.includes('<circle'));
+  assert.ok(out.buttonIcon.includes('<svg') && out.buttonIcon.includes('EXPORT SVG'), 'icon renders ahead of the label');
+  assert.ok(out.buttonIcon.indexOf('<svg') < out.buttonIcon.indexOf('EXPORT SVG'));
+  assert.ok(out.buttonPlain.includes('SAVE') && !out.buttonPlain.includes('<svg'));
+  assert.ok(out.buttonPrimary.includes('bg-[#7c5cff]'));
 });
