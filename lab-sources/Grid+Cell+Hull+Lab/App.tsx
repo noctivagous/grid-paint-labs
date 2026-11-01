@@ -947,7 +947,7 @@ export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   // Grid settings
-  const [gridType, setGridType] = useState<GridType>('square');
+  const [gridType, setGridType] = useState<GridType>('hexHoriz');
   const [cellSize, setCellSize] = useState(14);
   const [subdivide, setSubdivide] = useState(2);
   const [subdivideTarget, setSubdivideTarget] = useState<SubdivideTarget>('shape');

@@ -1,0 +1,46 @@
+How to avoid this
+
+You have four NCTGraphite checkouts:
+
+┌─────────────────────────────────┬────────────────────────────────────────┬─────────────────────┐
+│ Path                            │ Role                                   │ Was                 │
+├─────────────────────────────────┼────────────────────────────────────────┼─────────────────────┤
+│ Developer/NCTGraphite           │ Standalone (GitHub Desktop)            │ In sync with GitHub │
+├─────────────────────────────────┼────────────────────────────────────────┼─────────────────────┤
+│ grid-paint-labs/NCTGraphite     │ Submodule where you actually committed │ Ahead of GitHub     │
+├─────────────────────────────────┼────────────────────────────────────────┼─────────────────────┤
+│ nibglider/NCTGraphite           │ Submodule                              │ Old SHA             │
+├─────────────────────────────────┼────────────────────────────────────────┼─────────────────────┤
+│ nct-project-manager/NCTGraphite │ Submodule                              │ Old SHA             │
+└─────────────────────────────────┴────────────────────────────────────────┴─────────────────────┘
+
+Pick one place to commit NCTGraphite, and always push from there.
+
+Recommended: edit and push from the submodule of the project you are using
+
+# 1. Library first
+cd /Users/jpratt/Developer/grid-paint-labs/NCTGraphite
+git add -u && git commit -m "…"
+git push origin main
+
+# 2. Then record the new SHA in the parent
+cd /Users/jpratt/Developer/grid-paint-labs
+git add NCTGraphite
+git commit -m "Bump NCTGraphite"
+git push origin main
+
+If you also keep the standalone clone for GitHub Desktop, after every submodule push:
+
+cd /Users/jpratt/Developer/NCTGraphite
+git pull origin main
+
+If you commit in GitHub Desktop’s standalone clone, pull that into each submodule before you keep working:
+
+cd /Users/jpratt/Developer/grid-paint-labs/NCTGraphite
+git pull origin main
+
+Do not commit library work in two clones at once. That is what created the duplicate ui ctrls / submodule instructions split.
+
+GitHub Desktop does not treat a submodule as the same repo as the standalone clone. Opening NCTGraphite in Desktop only sees Developer/NCTGraphite. Opening grid-paint-labs only shows a single “submodule pointer changed” line, not those 5 library commits.
+
+After you push NCTGraphite, say if you want the gitlink commit in grid-paint-labs finished here too.
