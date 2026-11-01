@@ -48,6 +48,7 @@ async function loadProbe() {
           commands: cmds, keyMap: { flow: 'f', erase: 'e' }, rebinding: 'flow', onRebind: noop,
           heldActions: new Set(['flow']),
           emphasizeIds: new Set(['erase']),
+          showRebind: true,
         })),
         dialogOpen: renderToString(React.createElement(NCTGraphiteDialog, {
           open: true, onClose: noop, title: 'HELP', children: 'body text',
@@ -103,7 +104,7 @@ test('new lab-idiom widgets carry Meta contracts', async () => {
 test('new lab-idiom widgets render their contracts', async () => {
   const { render } = await loadProbe();
   const out = render();
-  assert.ok(out.keymap.includes('FLOW') && out.keymap.includes('PRESS KEY'));
+  assert.ok(out.keymap.includes('FLOW') && (out.keymap.includes('KEY…') || out.keymap.includes('REBIND')));
   assert.ok(out.keymap.includes('bg-[#7c5cff]'), 'held key chip highlights');
   assert.ok(out.keymap.split('bg-[#7c5cff]').length - 1 >= 2, 'emphasized chip carries the accent persistently');
   assert.ok(out.keymap.includes('>E<') || out.keymap.includes('>E</div>'));

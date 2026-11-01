@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   NCTGraphiteSlider, NCTGraphiteStack, NCTGraphiteGrid,
   NCTGraphiteAppShell, NCTGraphiteStagePanel, NCTGraphiteStageMain,
-  NCTGraphiteStageFooter, NCTGraphiteToggle, NCTGraphiteSegmented, NCTGraphitePanel,
+  NCTGraphiteStageFooter, NCTGraphiteToggle, NCTGraphiteSegmented,
   NCTGraphiteKeyMap, NCTGraphiteDialog, NCTGraphiteToast, useNCTGraphiteCommands,
   NCTGraphiteButton,
 } from "@nct/nctgraphite";
@@ -127,6 +127,10 @@ export default function App() {
     paramRef.current = { cols, rows, strength, mode, particleCount, showVectors, showParticles, showAttractors, flowTrails, hoverThin };
   }, [cols, rows, strength, mode, particleCount, showVectors, showParticles, showAttractors, flowTrails, hoverThin]);
   const partsRef = useRef<{ x: number; y: number }[]>([]);
+  // The scene redraws every frame, while this separate layer retains only
+  // particle marks. Keeping UI overlays out of the trail buffer prevents the
+  // brush ring from being stamped along the cursor path.
+  const particleTrailRef = useRef<HTMLCanvasElement | null>(null);
 
   const flash = (msg: string) => {
     setToast(msg);
@@ -186,7 +190,7 @@ export default function App() {
     setField(next);
   };
 
-  const { keyMap, heldActions, rebinding, beginRebind } = useNCTGraphiteCommands({
+  const { keyMap, heldActions } = useNCTGraphiteCommands({
     commands: VECTOR_COMMANDS,
     ignoreInputs: true,
     preventDefaultKeys: [" ", "x"],
@@ -214,10 +218,25 @@ export default function App() {
   });
   useEffect(() => { labHeldRef.current = heldActions; }, [heldActions]);
 
+  const activeKeyLabel =
+    heldActions.size > 0
+      ? [...heldActions]
+          .map((id) => VECTOR_COMMANDS.find((c) => c.id === id)?.label ?? id)
+          .join(' • ')
+          .toUpperCase()
+      : null;
+
   const rebuildField = (c: number, r: number) => {
+    const next = makeField(c, r);
+    // A slider input and a held paint key can occur in the same frame. Update
+    // the render-loop sources synchronously so it never indexes the old grid
+    // with the new dimensions.
+    fieldRef.current = next;
+    paramRef.current = { ...paramRef.current, cols: c, rows: r };
+    lastStampRef.current = 0;
     setCols(c);
     setRows(r);
-    setField(makeField(c, r));
+    setField(next);
   };
 
   // Render loop: field vectors, attractor swirl, advected particles.
@@ -234,13 +253,8 @@ export default function App() {
       const b = brushRef.current;
       const cw = CANVAS_W / p.cols, ch = CANVAS_H / p.rows;
 
-      if (p.flowTrails) {
-        ctx.fillStyle = "rgba(10, 10, 15, 0.28)";
-        ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
-      } else {
-        ctx.fillStyle = "#0a0a0f";
-        ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
-      }
+      ctx.fillStyle = "#0a0a0f";
+      ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
 
       // attractor influence: tangential swirl or radial pull
       for (const a of attrRef.current) {
@@ -360,9 +374,24 @@ export default function App() {
       if (p.showParticles) {
         const want = p.particleCount;
         const parts = partsRef.current;
+        let trail = particleTrailRef.current;
+        if (!trail) {
+          trail = document.createElement("canvas");
+          trail.width = CANVAS_W;
+          trail.height = CANVAS_H;
+          particleTrailRef.current = trail;
+        }
+        const trailCtx = trail.getContext("2d");
+        if (!trailCtx) return;
+        if (p.flowTrails) {
+          trailCtx.fillStyle = "rgba(10, 10, 15, 0.28)";
+          trailCtx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+        } else {
+          trailCtx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+        }
         while (parts.length < want) parts.push({ x: Math.random() * CANVAS_W, y: Math.random() * CANVAS_H });
         parts.length = Math.min(parts.length, Math.max(want, 0));
-        ctx.fillStyle = "#ffffff";
+        trailCtx.fillStyle = "#ffffff";
         for (const pt of parts) {
           const i = Math.max(0, Math.min(p.cols - 1, Math.floor(pt.x / cw)));
           const j = Math.max(0, Math.min(p.rows - 1, Math.floor(pt.y / ch)));
@@ -373,8 +402,11 @@ export default function App() {
             pt.x = Math.random() * CANVAS_W;
             pt.y = Math.random() * CANVAS_H;
           }
-          ctx.fillRect(pt.x, pt.y, 1.5, 1.5);
+          trailCtx.fillRect(pt.x, pt.y, 1.5, 1.5);
         }
+        ctx.drawImage(trail, 0, 0);
+      } else if (particleTrailRef.current) {
+        particleTrailRef.current.getContext("2d")?.clearRect(0, 0, CANVAS_W, CANVAS_H);
       }
 
       // spotlight: when hover-thinning is off, darken outside the brush
@@ -514,11 +546,18 @@ export default function App() {
       }
     >
         <NCTGraphiteStagePanel side="left" width={220} className="bg-[#0e0e14] border-r border-[#1a1a24] p-4 flex flex-col gap-4 shrink-0 overflow-y-auto">
-          <div className="text-[11px] tracking-[0.18em] text-[#7a7680]">CONTROLS / KEY-MAP</div>
-          <NCTGraphitePanel title="PAINT + ERASE">
-            <NCTGraphiteKeyMap commands={PAINT_COMMANDS} keyMap={keyMap} rebinding={rebinding} onRebind={beginRebind} heldActions={heldActions} emphasizeIds={PAINT_KEY_IDS} />
-          </NCTGraphitePanel>
-          <NCTGraphiteKeyMap commands={REST_COMMANDS} keyMap={keyMap} rebinding={rebinding} onRebind={beginRebind} heldActions={heldActions} />
+          <div className="rounded-[18px] bg-[var(--panel-2)] text-[#fdfaf3] p-3 border border-white/10">
+            <div className="text-[10px] tracking-[0.18em] opacity-60 mb-3 [font-family:var(--font-alt-mono)]">CONTROLS / KEY-MAP</div>
+            <div className="text-[10px] tracking-[0.12em] opacity-50 mb-2 [font-family:var(--font-alt-mono)]">PAINT + ERASE</div>
+            <NCTGraphiteKeyMap commands={PAINT_COMMANDS} keyMap={keyMap} heldActions={heldActions} emphasizeIds={PAINT_KEY_IDS} />
+            <div className="text-[10px] tracking-[0.12em] opacity-50 mb-2 mt-3 [font-family:var(--font-alt-mono)]">FIELD + BRUSH</div>
+            <NCTGraphiteKeyMap commands={REST_COMMANDS} keyMap={keyMap} heldActions={heldActions} />
+            <NCTGraphiteStack direction="row" gap={8} className="mt-3">
+              <div className={`flex-1 h-[36px] rounded-full grid place-items-center text-[11px] font-bold transition [font-family:var(--font-alt-mono)] ${activeKeyLabel ? 'bg-[#00e5ff] text-black' : 'bg-white/10 text-white/50'}`}>
+                {activeKeyLabel ? `● ${activeKeyLabel}` : 'IDLE — MOVE MOUSE'}
+              </div>
+            </NCTGraphiteStack>
+          </div>
           <NCTGraphiteStack direction="row" gap={8}>
             <NCTGraphiteButton label="EXPORT JSON" icon={DOWNLOAD_ICON} onClick={exportJSON} className="flex-1" />
             <label className="flex-1 inline-flex items-center justify-center gap-[6px] py-2 px-3 text-[11px] bg-[#1a1a24] hover:bg-[#222230] rounded font-bold border border-[#23232f] text-center cursor-pointer">

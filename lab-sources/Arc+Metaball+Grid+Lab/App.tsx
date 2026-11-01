@@ -280,7 +280,7 @@ export default function App() {
     setTimeout(() => setToast(null), 1400);
   };
 
-  const { keyMap, heldActions, rebinding, beginRebind } = useNCTGraphiteCommands({
+  const { keyMap, heldActions } = useNCTGraphiteCommands({
     commands: ARC_COMMANDS,
     ignoreInputs: true,
     preventDefaultKeys: [" ", "x", "g", "h", "f", "e", "q", "b", "n", "[", "]"],
@@ -509,6 +509,14 @@ export default function App() {
 
   const brushStroke = placeMode === "negative" ? "#ff4d6d" : placeMode === "sticky" ? "#00e5ff" : "#7c5cff";
 
+  const activeKeyLabel =
+    heldActions.size > 0
+      ? [...heldActions]
+          .map((id) => ARC_COMMANDS.find((c) => c.id === id)?.label ?? id)
+          .join(' • ')
+          .toUpperCase()
+      : null;
+
   return (
     <NCTGraphiteAppShell
       className="nctgraphite-font-sans"
@@ -598,9 +606,14 @@ export default function App() {
             </label>
           </div>
         </div>
-        <div>
-          <div className="text-[10px] tracking-[0.2em] opacity-50 mb-2">KEY-CLICK MAP • REBINDABLE</div>
-          <NCTGraphiteKeyMap commands={ARC_COMMANDS} keyMap={keyMap} rebinding={rebinding} onRebind={beginRebind} heldActions={heldActions} emphasizeIds={HOLD_IDS} />
+        <div className="rounded-[18px] bg-[var(--panel-2)] text-[#fdfaf3] p-3 border border-white/10">
+          <div className="text-[10px] tracking-[0.18em] opacity-60 mb-3 [font-family:var(--font-alt-mono)]">KEY-CLICK MAP — MOUSE AIMS</div>
+          <NCTGraphiteKeyMap commands={ARC_COMMANDS} keyMap={keyMap} heldActions={heldActions} emphasizeIds={HOLD_IDS} />
+          <NCTGraphiteStack direction="row" gap={8} className="mt-3">
+            <div className={`flex-1 h-[36px] rounded-full grid place-items-center text-[11px] font-bold transition [font-family:var(--font-alt-mono)] ${activeKeyLabel ? 'bg-[#00e5ff] text-black' : 'bg-white/10 text-white/50'}`}>
+              {activeKeyLabel ? `● ${activeKeyLabel}` : 'IDLE — MOVE MOUSE'}
+            </div>
+          </NCTGraphiteStack>
         </div>
       </NCTGraphiteStagePanel>
 

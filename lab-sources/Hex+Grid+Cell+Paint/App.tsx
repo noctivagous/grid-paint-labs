@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from "react";
-import { NCTGraphiteSlider, NCTGraphiteStack, NCTGraphiteGrid, NCTGraphiteAppShell, NCTGraphiteToggle, NCTGraphiteButton, useNCTGraphiteCommands } from "@nct/nctgraphite";
+import { NCTGraphiteSlider, NCTGraphiteStack, NCTGraphiteGrid, NCTGraphiteAppShell, NCTGraphiteToggle, NCTGraphiteButton, NCTGraphiteKeyMap, useNCTGraphiteCommands } from "@nct/nctgraphite";
 import type { NCTGraphiteCommandDef } from "@nct/nctgraphite";
 
 type GridType = "flat" | "pointy" | "square";
@@ -73,6 +73,8 @@ const HEX_COMMANDS: NCTGraphiteCommandDef[] = Object.entries(ACTIONS_LABEL).map(
   defaultKey: DEFAULT_KEYS[id] ?? "",
 }));
 
+const HEX_EMPHASIZE_IDS = new Set(['paint', 'paintSecondary', 'erase']);
+
 function hexPoints(cx:number, cy:number, size:number, type:GridType, rotOffset=0){
   const pts: [number,number][] = [];
   for(let i=0;i<6;i++){
@@ -126,7 +128,7 @@ export default function App(){
   const [activeCount, setActiveCount] = useState(0);
   const [previewCount, setPreviewCount] = useState(0);
   const [toast, setToast] = useState<string|null>(null);
-  const { keyMap, heldActions, rebinding, beginRebind } = useNCTGraphiteCommands({
+  const { keyMap, heldActions } = useNCTGraphiteCommands({
     commands: HEX_COMMANDS,
     onAction: (id, e) => {
       if (id === "clear") {
@@ -619,6 +621,11 @@ export default function App(){
     return Array.from(map.entries()).sort((a,b)=>b[1]-a[1]);
   },[activeCount, colorIdx]);
 
+  const activeKeyLabel =
+    heldActions.size > 0
+      ? [...heldActions].map((a) => ACTIONS_LABEL[a]?.label ?? a.toUpperCase()).join(' • ')
+      : null;
+
   return (
     <>
     <NCTGraphiteAppShell
@@ -661,30 +668,19 @@ export default function App(){
     >
         <aside className="bg-[#0e0e14] flex flex-col min-h-0">
           <div className="p-4 border-b border-[#1a1a24]">
-            <div className="text-[11px] tracking-[0.18em] text-[#7a7680] mb-3">CONTROLS / KEY-MAP</div>
-            <div className="space-y-[6px]">
-              {Object.entries(ACTIONS_LABEL).map(([action, meta])=>{
-                const key = keyMap[action];
-                const isHeld = heldActions.has(action);
-                const isRebinding = rebinding===action;
-                return (
-                  <div key={action} className={`group flex items-center justify-between rounded-[8px] border px-2.5 py-[7px] transition ${isHeld?"bg-[#7c5cff] border-[#7c5cff] text-white": isRebinding?"bg-[#1a1a24] border-[#00e5ff]":"bg-[#15151e] border-[#23232f] hover:border-[#2a2a3a]"}`}>
-                    <div className="flex items-center gap-2.5">
-                      <div className={`w-[22px] h-[22px] grid place-items-center rounded-[5px] text-[11px] font-bold ${isHeld?"bg-white text-[#7c5cff]":"bg-[#1a1a24] text-[#ece9e3] border border-[#2a2a3a]"}`}>{key.toUpperCase()}</div>
-                      <div>
-                        <div className={`text-[11px] font-bold leading-none ${isHeld?"text-white":"text-[#ece9e3]"}`}>{meta.label}</div>
-                        <div className={`text-[9px] leading-[1.1] mt-[2px] ${isHeld?"text-white/70":"text-[#7a7680]"}`}>{meta.desc}</div>
-                      </div>
-                    </div>
-                    <button
-                      onClick={()=> beginRebind(isRebinding?null:action)}
-                      className={`text-[9px] tracking-[0.1em] px-2 py-1 rounded border transition ${isRebinding?"bg-[#00e5ff] text-black border-[#00e5ff]":"bg-[#1a1a24] border-[#2a2a3a] text-[#7a7680] hover:text-white hover:border-[#3a3a4a]"}`}
-                    >
-                      {isRebinding?"PRESS KEY":"REBIND"}
-                    </button>
-                  </div>
-                );
-              })}
+            <div className="rounded-[18px] bg-[var(--panel-2)] text-[#fdfaf3] p-3 border border-white/10">
+              <div className="text-[10px] tracking-[0.18em] opacity-60 mb-3 [font-family:var(--font-alt-mono)]">CONTROLS / KEY-MAP</div>
+              <NCTGraphiteKeyMap
+                commands={HEX_COMMANDS}
+                keyMap={keyMap}
+                heldActions={heldActions}
+                emphasizeIds={HEX_EMPHASIZE_IDS}
+              />
+              <NCTGraphiteStack direction="row" gap={8} className="mt-3">
+                <div className={`flex-1 h-[36px] rounded-full grid place-items-center text-[11px] font-bold transition [font-family:var(--font-alt-mono)] ${activeKeyLabel ? 'bg-[#00e5ff] text-black' : 'bg-white/10 text-white/50'}`}>
+                  {activeKeyLabel ? `● ${activeKeyLabel}` : 'IDLE — MOVE MOUSE'}
+                </div>
+              </NCTGraphiteStack>
             </div>
 
             <div className="mt-4 rounded-[10px] bg-[#fdfaf3] text-[#1a1a24] p-3 border border-[#e8e0cc]">

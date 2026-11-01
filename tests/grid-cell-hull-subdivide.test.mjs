@@ -15,6 +15,14 @@ test('hull lab maps D to subdivide and S to coarsen', () => {
   assert.match(src, /label="SUBDIVIDE"/);
 });
 
+test('hull lab maps T/Y to brush-local cell shape scaling', () => {
+  assert.match(src, /id: "scaleDown"[\s\S]*defaultKey: "t"/);
+  assert.match(src, /id: "scaleUp"[\s\S]*defaultKey: "y"/);
+  assert.match(src, /const scaleCellsAt = useCallback/);
+  assert.match(src, /paintFalloff[\s\S]*brushInfluence/);
+  assert.match(src, /label="DEFAULT CELL SHAPE SCALE"/);
+});
+
 test('hull lab splits squares into 4 and triangles into 4', () => {
   assert.match(src, /if \(p\.length === 3\)/);
   assert.match(src, /if \(p\.length === 4\)/);
