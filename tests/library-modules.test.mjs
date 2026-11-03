@@ -134,7 +134,7 @@ test('vite dev plugin serves library sources byte-for-byte', () => {
   const config = fs.readFileSync(path.join(root, 'vite.config.js'), 'utf8');
   assert.ok(
     config.includes('/NCTGraphite/packages/nctgraphite/src/'),
-    'vite plugin must raw-serve library sources or blob-module imports fail under npm run dev'
+    'vite plugin must raw-serve library sources or blob-module imports fail under npm run dev:multiapp'
   );
   assert.ok(
     config.includes("urlPath.endsWith('.ts')"),
@@ -142,14 +142,42 @@ test('vite dev plugin serves library sources byte-for-byte', () => {
   );
 });
 
+test('raw lab requests bypass Vite transforms on the multi-app server', async () => {
+  const { default: multiappConfig } = await import('../vite.config.js');
+  const plugin = multiappConfig.plugins.find((item) => item.name === 'raw-lab-sources');
+  assert.ok(plugin);
+  let middleware;
+  plugin.configureServer({ config: { root }, middlewares: { use: (handler) => { middleware = handler; } } });
+  const sourcePath = '/NCTGraphite/packages/nctgraphite/src/parameters/NCTGraphiteParameters.tsx';
+  let passedThrough = false;
+  middleware({ url: sourcePath }, {}, () => { passedThrough = true; });
+  assert.equal(passedThrough, true, 'normal module requests must reach Vite');
+  const content = await new Promise((resolve, reject) => {
+    middleware({ url: `${sourcePath}?nct-raw` }, {
+      setHeader() {},
+      end: (data) => resolve(data.toString()),
+    }, (error) => reject(error ?? new Error('raw request unexpectedly passed through')));
+  });
+  assert.equal(content, fs.readFileSync(path.join(root, sourcePath), 'utf8'));
+  const switcher = fs.readFileSync(path.join(root, 'lab-switcher.js'), 'utf8');
+  assert.match(switcher, /fetch\(`\$\{path\}\?nct-raw`\)/);
+  assert.match(switcher, /App\.tsx\?nct-raw/);
+});
+
 test('blob loader rewrites d3-contour to a hierarchical CDN URL', () => {
-  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const html = fs.readFileSync(path.join(root, 'lab-switcher.js'), 'utf8');
   assert.ok(html.includes("'d3-contour': 'https://esm.sh/d3-contour@4'"));
   assert.ok(html.includes('rewriteBareNpm'));
 });
 
+test('switcher loads from a stable script rather than a Vite HTML proxy', () => {
+  const page = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(page, /<script\s+type="module"\s+src="\.\/lab-switcher\.js"><\/script>/);
+  assert.doesNotMatch(page, /<script\s+type="module">/);
+});
+
 test('blob loader rewrites react-dom before react for library portals', () => {
-  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const html = fs.readFileSync(path.join(root, 'lab-switcher.js'), 'utf8');
   assert.ok(html.includes('REACT_DOM_URL'));
   assert.ok(html.includes("react-dom\\/client"));
   assert.ok(html.includes("from '${REACT_DOM_URL}'"));

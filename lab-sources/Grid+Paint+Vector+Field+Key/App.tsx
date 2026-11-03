@@ -4,9 +4,11 @@ import {
   NCTGraphiteAppShell, NCTGraphiteStagePanel, NCTGraphiteStageMain,
   NCTGraphiteStageFooter, NCTGraphiteToggle, NCTGraphiteSegmented,
   NCTGraphiteKeyMap, NCTGraphiteDialog, NCTGraphiteToast, useNCTGraphiteCommands,
-  NCTGraphiteButton,
+  NCTGraphiteButton, makeVectorField, vectorStyle,
 } from "@nct/nctgraphite";
-import type { NCTGraphiteCommandDef } from "@nct/nctgraphite";
+import type { NCTGraphiteCommandDef, VectorStyle } from "@nct/nctgraphite";
+export { vectorStyle };
+export type { VectorStyle };
 
 type FieldMode = "seek" | "velocity" | "swirl";
 type Vec = { x: number; y: number; vx: number; vy: number };
@@ -51,49 +53,11 @@ const MODES: { value: FieldMode; label: string }[] = [
 let nextId = 1;
 
 function makeField(cols: number, rows: number): Vec[] {
-  const out: Vec[] = [];
-  for (let j = 0; j < rows; j++) {
-    for (let i = 0; i < cols; i++) {
-      out.push({ x: (i + 0.5) * (CANVAS_W / cols), y: (j + 0.5) * (CANVAS_H / rows), vx: 0, vy: 0 });
-    }
-  }
-  return out;
+  return makeVectorField(cols, rows, CANVAS_W, CANVAS_H);
 }
 
 function mag(vx: number, vy: number) {
   return Math.hypot(vx, vy);
-}
-
-export interface VectorStyle {
-  skip: boolean;
-  m: number;
-  hue: number;
-  alpha: number;
-  width: number;
-  arrow: boolean;
-  light: number;
-}
-
-/**
- * Original angle→color scheme: hue is the vector direction on a 0–360 wheel
- * (canvas y-down), lightness 62% (75% dimmed preview), alpha grows with
- * magnitude. Vectors under an idle brush render dimmed (preview); vectors
- * under a held paint key render full with arrowheads above 0.08.
- */
-export function vectorStyle(vx: number, vy: number, preview: boolean): VectorStyle {
-  const m = Math.hypot(vx, vy);
-  if (m < 0.01) return { skip: true, m, hue: 0, alpha: 0, width: 0, arrow: false, light: 62 };
-  const hue = ((Math.atan2(vy, vx) * 180) / Math.PI + 180) % 360;
-  const alpha = Math.min(0.95, 0.25 + m * 0.9) * (preview ? 0.35 : 1);
-  return {
-    skip: false,
-    m,
-    hue,
-    alpha,
-    width: preview ? 1 : Math.max(1, m * 2.2),
-    arrow: !preview && m > 0.08,
-    light: preview ? 75 : 62,
-  };
 }
 
 export default function App() {

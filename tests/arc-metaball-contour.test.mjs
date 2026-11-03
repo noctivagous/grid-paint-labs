@@ -21,6 +21,7 @@ async function loadField() {
     bundle: true,
     format: 'esm',
     platform: 'node',
+    alias: { '@nct/nctgraphite': path.join(root, 'NCTGraphite/packages/nctgraphite/src/index.ts') },
     outfile: path.join(tmp, 'probe.bundle.mjs'),
   });
   return import(path.join(tmp, 'probe.bundle.mjs'));

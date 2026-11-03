@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // The switcher (index.html) fetches App.tsx / index.css / library sources as
 // TEXT and transpiles them in the browser with Babel. Vite's dev pipeline
@@ -9,11 +10,13 @@ import path from 'node:path';
 // (e.g. `/NCTGraphite/...`, pre-bundled `/node_modules/.vite/...`) that the
 // in-browser blob-module resolver cannot handle. This plugin serves those
 // sources byte-for-byte before Vite's internal middlewares run.
-const rawLabSources = () => ({
+export const rawLabSources = () => ({
   name: 'raw-lab-sources',
   configureServer(server) {
     server.middlewares.use((req, res, next) => {
       const urlPath = (req.url || '').split('?')[0];
+      const params = new URLSearchParams((req.url || '').split('?')[1] || '');
+      if (!params.has('nct-raw')) return next();
       const isLabFile = urlPath.startsWith('/lab-sources/') &&
         (urlPath.endsWith('.tsx') || urlPath.endsWith('.ts') || urlPath.endsWith('.css'));
       const isLibraryFile = urlPath.startsWith('/NCTGraphite/packages/nctgraphite/src/') &&
@@ -32,5 +35,6 @@ const rawLabSources = () => ({
 
 export default {
   plugins: [rawLabSources()],
-  server: { port: 8123, strictPort: true },
+  resolve: { alias: { '@nct/nctgraphite': fileURLToPath(new URL('./NCTGraphite/packages/nctgraphite/src/index.ts', import.meta.url)) } },
+  server: { port: 8123, strictPort: true, host: '127.0.0.1' },
 };

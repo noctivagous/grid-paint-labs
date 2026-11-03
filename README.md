@@ -17,11 +17,14 @@ It compiles the `App.tsx` + `index.css` sources live in
 the browser — it does not load the prebuilt files in
 [standalone-html/](standalone-html),
 which are independent static copies.
-Run it with `npm run dev` (serves `index.html` plus the
-lab sources raw via `vite.config.js`), or with
-`python3 -m http.server`; opened via `file://` it asks
-you to pick the folder instead. Needs network for the
-React/Babel/Tailwind CDNs.
+Run the original labs with `npm run dev:multiapp` (serves
+`index.html` plus the lab sources raw via `vite.config.js`
+on port 8123), or with `python3 -m http.server`; opened
+via `file://` it asks you to pick the folder instead.
+Needs network for the React/Babel/Tailwind CDNs.
+
+The unified Paper.js app is the default: `npm run dev`
+serves it at http://127.0.0.1:8124/.
 
 ## Artifacts
 
