@@ -57,9 +57,9 @@ paint flows, drop attractors, erase, or smooth.
 - Keys (rebindable): `F` paint/flow, `E` erase (zeroes
   vectors), `Q` smooth (averages neighbors), `G` drop
   attractor, `[` / `]` brush size, `X` clear field.
-- Field modes: seek (vectors point at cursor), velocity
-  (vectors follow mouse speed — whip fast for streams),
-  swirl/vortex (attractors go orbital).
+- Field modes live in `VECTOR_BRUSH_OPS`: seek, velocity, swirl,
+  swirl−, seek−, amplify, damp, rotate, smudge, drain, turbulence,
+  normalize, and invert. `F` paints the selected mode.
 - Controls: brush size (18–320), strength, grid
   resolution, particle count; live field and live
   attractor-field previews; flow preview.

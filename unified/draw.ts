@@ -1,12 +1,53 @@
 import paper from 'paper';
-import { vectorStyle, type NCTGraphitePoint } from '@nct/nctgraphite';
+import { vectorShapePath } from './vectorShapes';
+import { vectorGridCells } from './vectorGrid';
+import { vectorStyle, satoNeck, type NCTGraphitePoint } from '@nct/nctgraphite';
 import type { DotShadingLayer, GridPaintDocument, GridPaintLayer, MetaballLayer, VectorFieldLayer } from './layers';
-import { hullOutlines, layerLattice, metaballContours, metaballNecks, PALETTE } from './layers';
+import { hullOutlines, layerContents, layerLattice, metaballContours, metaballNecks, PALETTE, type BrushMode } from './layers';
 
 function toColor(scope: paper.PaperScope, value: string, alpha = 1): paper.Color {
   const color = new scope.Color(value);
   color.alpha = alpha;
   return color;
+}
+
+/** Rebuild only the visible workspace grid as the view moves. */
+export function drawWorkspaceGrid(scope: paper.PaperScope) {
+  const layer = scope.project.activeLayer;
+  layer.children.find(item => item.name === 'workspace-grid')?.remove();
+  const page = layer.children.find(item => item.name === 'document-page');
+  if (!page) return;
+  const bounds = scope.view.bounds;
+  const zoom = scope.view.zoom || 1;
+  let spacing = 20;
+  while (spacing * zoom < 12) spacing *= 2;
+  const grid = new scope.Group({ name: 'workspace-grid', insert: false });
+  const addLine = (from: paper.Point, to: paper.Point) => {
+    const line = new scope.Path.Line({ from, to, insert: false });
+    line.strokeColor = new scope.Color(0, 0, 0, 0.14);
+    line.strokeWidth = 1 / zoom;
+    grid.addChild(line);
+  };
+  for (let x = Math.ceil(bounds.left / spacing) * spacing; x <= bounds.right; x += spacing) {
+    addLine(new scope.Point(x, bounds.top), new scope.Point(x, bounds.bottom));
+  }
+  for (let y = Math.ceil(bounds.top / spacing) * spacing; y <= bounds.bottom; y += spacing) {
+    addLine(new scope.Point(bounds.left, y), new scope.Point(bounds.right, y));
+  }
+  grid.insertAbove(page);
+}
+
+export function drawBrush(scope: paper.PaperScope, brush: { x: number; y: number; radius: number; color: string } | null) {
+  scope.project.activeLayer.children.find(item => item.name === 'brush-cursor')?.remove();
+  if (brush) {
+    const ring = new scope.Path.Circle(new scope.Point(brush.x, brush.y), brush.radius);
+    ring.name = 'brush-cursor';
+    ring.strokeColor = toColor(scope, brush.color, 0.9);
+    ring.strokeWidth = 1.5;
+    ring.dashArray = [5, 4];
+    ring.fillColor = toColor(scope, brush.color, 0.08);
+  }
+  scope.view.update();
 }
 
 function polygon(scope: paper.PaperScope, corners: readonly NCTGraphitePoint[]): paper.Path {
@@ -25,19 +66,40 @@ function pathFromD(scope: paper.PaperScope, d: string, fill: string, alpha: numb
   return item;
 }
 
+const gridImages = new WeakMap<paper.PaperScope, Map<string, { key: string; splits: unknown; image: HTMLCanvasElement }>>();
+
 function drawCellLayer(scope: paper.PaperScope, layer: Extract<GridPaintLayer, { mode: 'hull' | 'cell-paint' }>, canvas: GridPaintDocument['snapshot']['canvas'], opacity: number) {
+  if (!layer.settings.showGrid && !(layer.mode === 'cell-paint' && layer.settings.showCenters) && !Object.keys(layer.data.cells).length) return;
   const lattice = layerLattice(layer, canvas);
   if (layer.settings.showGrid) {
-    for (const cell of lattice) {
-      const path = polygon(scope, cell.corners);
-      path.strokeColor = toColor(scope, '#cfc6b4', 0.55 * opacity);
-      path.strokeWidth = 1;
+    let cache = gridImages.get(scope);
+    if (!cache) { cache = new Map(); gridImages.set(scope, cache); }
+    const key = `${canvas.width},${canvas.height},${layer.settings.kind},${layer.settings.size},${opacity}`;
+    let entry = cache.get(layer.id);
+    if (!entry || entry.key !== key || entry.splits !== layer.data.splits) {
+      const image = window.document.createElement('canvas');
+      image.width = canvas.width; image.height = canvas.height;
+      const context = image.getContext('2d')!;
+      context.strokeStyle = `rgba(207, 198, 180, ${0.55 * opacity})`;
+      context.lineWidth = 1;
+      context.beginPath();
+      for (const cell of lattice) {
+        context.moveTo(cell.corners[0].x, cell.corners[0].y);
+        for (const corner of cell.corners.slice(1)) context.lineTo(corner.x, corner.y);
+        context.closePath();
+      }
+      context.stroke();
+      entry = { key, splits: layer.data.splits, image };
+      if (cache.size >= 12 && !cache.has(layer.id)) cache.delete(cache.keys().next().value!);
+      cache.set(layer.id, entry);
     }
+    new scope.Raster({ source: entry.image, position: new scope.Point(canvas.width / 2, canvas.height / 2) });
   }
   for (const cell of lattice) {
     const painted = layer.data.cells[cell.id];
     if (!painted) continue;
-    const path = polygon(scope, cell.corners);
+    const scale = layer.data.scales?.[cell.id] ?? 1;
+    const path = polygon(scope, cell.corners.map(p => ({ x: cell.center.x + (p.x - cell.center.x) * scale, y: cell.center.y + (p.y - cell.center.y) * scale })));
     path.fillColor = toColor(scope, painted.color, (layer.mode === 'hull' ? 0.78 : 0.92) * opacity);
     path.strokeColor = toColor(scope, painted.color, opacity);
     path.strokeWidth = 1;
@@ -48,7 +110,7 @@ function drawCellLayer(scope: paper.PaperScope, layer: Extract<GridPaintLayer, {
       dot.fillColor = toColor(scope, '#8a8378', opacity);
     }
   }
-  if (layer.mode === 'hull') {
+  if (layer.mode === 'hull' || (layer.mode === 'cell-paint' && layer.settings.hullMode && layer.settings.hullMode !== 'off')) {
     for (const loop of hullOutlines(layer, canvas)) {
       if (loop.points.length < 3) continue;
       const path = polygon(scope, loop.points);
@@ -73,16 +135,35 @@ function drawMetaballLayer(scope: paper.PaperScope, layer: MetaballLayer, canvas
     }
   }
   if (layer.settings.engine === 'arc') {
+    const holes = layer.data.blobs.filter(blob => blob.type === 'negative');
+    const masks: paper.PathItem[] = holes.map(blob => new scope.Path.Circle(new scope.Point(blob.x, blob.y), blob.r));
+    for (let i = 0; i < holes.length; i++) for (let j = i + 1; j < holes.length; j++) {
+      const a = holes[i], b = holes[j];
+      const neck = satoNeck(a.r, b.r, a, b, layer.settings.handleSize, layer.settings.goo, layer.settings.kFactor);
+      if (neck) masks.push(new scope.CompoundPath({ pathData: neck.path }));
+    }
+    const subtractHoles = (initial: paper.PathItem) => {
+      let item = initial;
+      for (const mask of masks) {
+        if (!item.bounds.intersects(mask.bounds)) continue;
+        const result = item.subtract(mask);
+        item.remove(); item = result;
+      }
+      return item;
+    };
     for (const blob of layer.data.blobs) {
-      const circle = new scope.Path.Circle(new scope.Point(blob.x, blob.y), blob.r);
-      const alpha = blob.type === 'negative' ? 0.18 : 0.82;
-      circle.fillColor = toColor(scope, blob.color, alpha * opacity);
+      if (blob.type === 'negative') continue;
+      const circle = subtractHoles(new scope.Path.Circle(new scope.Point(blob.x, blob.y), blob.r));
+      circle.fillColor = toColor(scope, blob.color, 0.82 * opacity);
       circle.strokeColor = toColor(scope, blob.color, opacity);
-      circle.strokeWidth = blob.type === 'negative' ? 1 : 1.4;
+      circle.strokeWidth = 1.4;
     }
     for (const neck of metaballNecks(layer)) {
-      pathFromD(scope, neck.path, neck.color, 0.88 * opacity);
+      const path = subtractHoles(new scope.CompoundPath({ pathData: neck.path }));
+      path.fillColor = toColor(scope, neck.color, 0.88 * opacity);
+      path.fillRule = 'evenodd';
     }
+    for (const mask of masks) mask.remove();
     return;
   }
   for (const contour of metaballContours(layer, canvas)) {
@@ -90,21 +171,39 @@ function drawMetaballLayer(scope: paper.PaperScope, layer: MetaballLayer, canvas
   }
 }
 
-function drawVectorLayer(scope: paper.PaperScope, layer: VectorFieldLayer, opacity: number, brush: { x: number; y: number; radius: number } | null, painting: boolean) {
-  const minCell = layer.data.vectors.length
-    ? Math.min(
-      Math.abs(layer.data.vectors[1]?.x - layer.data.vectors[0]?.x || 16),
-      24,
-    )
-    : 16;
-  for (const sample of layer.data.vectors) {
+function drawVectorLayer(scope: paper.PaperScope, layer: VectorFieldLayer, canvas: GridPaintDocument['snapshot']['canvas'], opacity: number, brush: { x: number; y: number; radius: number } | null, painting: boolean, artworkOnly = false) {
+  const kind = layer.settings.gridKind ?? 'square';
+  if (layer.settings.showGrid && !artworkOnly) {
+    if (kind === 'square') {
+      const cw = canvas.width / layer.settings.columns, ch = canvas.height / layer.settings.rows;
+      for (const sample of layer.data.vectors) {
+        const path = new scope.Path.Rectangle(new scope.Rectangle(sample.x - cw / 2, sample.y - ch / 2, cw, ch));
+        path.strokeColor = toColor(scope, '#1a1a24', 0.18 * opacity); path.strokeWidth = 0.6;
+      }
+    } else {
+      const cells = vectorGridCells(kind, layer.settings.columns, layer.settings.rows, canvas);
+      const dx = (layer.data.vectors[0]?.x ?? cells[0]?.center.x ?? 0) - (cells[0]?.center.x ?? 0);
+      const dy = (layer.data.vectors[0]?.y ?? cells[0]?.center.y ?? 0) - (cells[0]?.center.y ?? 0);
+      for (const cell of cells) {
+        const path = polygon(scope, cell.corners.map(p => ({ x: p.x + dx, y: p.y + dy })));
+        path.strokeColor = toColor(scope, '#1a1a24', 0.18 * opacity); path.strokeWidth = 0.6;
+      }
+    }
+  }
+  const shape = vectorShapePath(layer, canvas.width, canvas.height);
+  if (shape) pathFromD(scope, shape, PALETTE[layer.settings.colorIndex % PALETTE.length], opacity);
+  const minCell = Math.min(canvas.width / layer.settings.columns, canvas.height / layer.settings.rows);
+  for (const sample of artworkOnly ? [] : layer.data.vectors) {
     const idle = new scope.Path.Circle(new scope.Point(sample.x, sample.y), 0.8);
     idle.fillColor = toColor(scope, '#1a1a24', 0.12 * opacity);
   }
   if (layer.settings.showVectors) {
     for (const sample of layer.data.vectors) {
       const inBrush = !!brush && Math.hypot(sample.x - brush.x, sample.y - brush.y) < brush.radius;
-      const style = vectorStyle(sample.vx, sample.vy, layer.settings.hoverThin && inBrush && !painting);
+      const style = vectorStyle(sample.vx, sample.vy, layer.settings.hoverThin && inBrush && !painting, {
+        weight: layer.settings.weight ?? 2.2,
+        minWidth: layer.settings.minWidth ?? 1,
+      });
       if (style.skip) continue;
       const length = style.m * minCell * 0.9;
       const angle = Math.atan2(sample.vy, sample.vx);
@@ -239,6 +338,7 @@ function drawLayer(
   inactive: boolean,
   brush: { x: number; y: number; radius: number } | null,
   painting: boolean,
+  artworkOnly = false,
 ) {
   const dim = inactive ? 0.45 : 1;
   const opacity = (layer.opacity ?? 1) * dim;
@@ -247,7 +347,7 @@ function drawLayer(
     return;
   }
   if (layer.mode === 'vector-field') {
-    drawVectorLayer(scope, layer, opacity, inactive ? null : brush, painting);
+    drawVectorLayer(scope, layer, canvas, opacity, inactive ? null : brush, painting, artworkOnly);
     return;
   }
   if (layer.mode === 'dot-shading') {
@@ -262,20 +362,25 @@ export function drawDocument(
   document: GridPaintDocument,
   brush: { x: number; y: number; radius: number; color: string } | null,
   painting = false,
+  artworkOnly = false,
+  activeMode?: BrushMode,
 ) {
   scope.project.activeLayer.removeChildren();
   const { canvas, activeLayerId } = document.snapshot;
   const page = new scope.Path.Rectangle(new scope.Rectangle(0, 0, canvas.width, canvas.height));
+  page.name = 'document-page';
   page.fillColor = new scope.Color(canvas.background);
-  for (const layer of document.visibleLayers) {
-    drawLayer(scope, layer, canvas, layer.id !== activeLayerId, brush, painting);
+  if (!artworkOnly) drawWorkspaceGrid(scope);
+  for (const parent of document.visibleLayers) for (const content of layerContents(parent)) {
+    const layer = { ...content, visible: parent.visible, opacity: parent.opacity } as GridPaintLayer;
+    let rendered = layer;
+    if (artworkOnly) {
+      if (layer.mode === 'vector-field') rendered = { ...layer, settings: { ...layer.settings, showVectors: layer.settings.shapeMode && layer.settings.shapeMode !== 'off' ? false : layer.settings.showVectors }, data: { ...layer.data, attractors: [] } };
+      else rendered = { ...layer, settings: { ...layer.settings, showGrid: false, showCenters: false } } as GridPaintLayer;
+    }
+    const inactive = parent.id !== activeLayerId;
+    drawLayer(scope, rendered, canvas, artworkOnly ? false : inactive, artworkOnly || inactive || (activeMode && layer.mode !== activeMode) ? null : brush, painting, artworkOnly);
   }
-  if (brush) {
-    const ring = new scope.Path.Circle(new scope.Point(brush.x, brush.y), brush.radius);
-    ring.strokeColor = toColor(scope, brush.color, 0.9);
-    ring.strokeWidth = 1.5;
-    ring.dashArray = [5, 4];
-    ring.fillColor = toColor(scope, brush.color, 0.08);
-  }
+  if (!artworkOnly) drawBrush(scope, brush);
   scope.view.update();
 }

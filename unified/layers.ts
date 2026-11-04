@@ -1,8 +1,9 @@
+import { makeGridVectors, stampGridVectors, vectorLookup, type VectorGridKind } from './vectorGrid';
+import { adaptiveLattice, childCells, resolveAdaptiveEdges, type AdaptiveData, type AdaptiveCell } from './adaptiveCells';
 import {
   NCTGraphiteDocument,
   contourLayersForBlobs,
   createNCTGraphiteLayerId,
-  gridCell,
   gridCellsInBounds,
   hullLoopsFromPolygons,
   makeSampleLattice,
@@ -10,7 +11,11 @@ import {
   roundRectStamp,
   satoNeck,
   stampSampleGain,
+  constrainVectorField,
   stampVectorField,
+  vectorBrushOp,
+  vectorBrushPickerOps,
+  VECTOR_BRUSH_OPS,
   type FieldBlob,
   type HullLoop,
   type HullMode,
@@ -26,6 +31,7 @@ import {
   type SampleRotationMode,
   type ShadingFalloff,
   type VectorAttractor,
+  type VectorFieldLimits,
   type VectorFieldMode,
   type VectorSample,
 } from '@nct/nctgraphite';
@@ -36,6 +42,10 @@ export type { HullLoop, HullMode };
 export const PALETTE = ['#7c5cff', '#00e5ff', '#ff7a45', '#ffe14a', '#38f28a', '#ff4d6d', '#b18aff', '#4af0ff'];
 
 export type CellPaintSettings = {
+  hullMode?: HullMode | 'off';
+  subdivideDepth?: number;
+  subdivideTarget?: 'shape' | 'grid';
+  subdivideFalloff?: boolean;
   kind: NCTGraphiteGridKind;
   size: number;
   columns: number;
@@ -48,6 +58,9 @@ export type CellPaintSettings = {
 };
 
 export type HullSettings = {
+  subdivideDepth?: number;
+  subdivideTarget?: 'shape' | 'grid';
+  subdivideFalloff?: boolean;
   kind: NCTGraphiteGridKind;
   size: number;
   brushRadius: number;
@@ -60,13 +73,13 @@ export type PaintedCells = Record<string, { color: string }>;
 
 export type CellPaintLayer = NCTGraphiteLayerRecord & {
   mode: 'cell-paint';
-  data: { cells: PaintedCells };
+  data: { cells: PaintedCells } & AdaptiveData;
   settings: CellPaintSettings;
 };
 
 export type HullLayer = NCTGraphiteLayerRecord & {
   mode: 'hull';
-  data: { cells: PaintedCells };
+  data: { cells: PaintedCells } & AdaptiveData;
   settings: HullSettings;
 };
 
@@ -83,6 +96,9 @@ export type MetaballSettings = {
   colorIndex: number;
   showGrid: boolean;
   smoothBezier: boolean;
+  snap?: boolean;
+  rectAspect?: number;
+  cornerT?: number;
 };
 
 export type MetaballLayer = NCTGraphiteLayerRecord & {
@@ -92,14 +108,27 @@ export type MetaballLayer = NCTGraphiteLayerRecord & {
 };
 
 export type VectorFieldSettings = {
+  gridKind?: VectorGridKind;
+  showGrid?: boolean;
   columns: number;
   rows: number;
+  shapeMode: 'off' | 'magnitude' | 'strokes' | 'streamlines';
+  shapeThreshold: number;
+  shapeThickness: number;
+  shapeMerge: number;
   mode: VectorFieldMode;
   strength: number;
   brushRadius: number;
   showVectors: boolean;
   hoverThin: boolean;
   colorIndex: number;
+  angleMin: number;
+  angleMax: number;
+  angleStep: number;
+  lengthMin: number;
+  lengthMax: number;
+  weight: number;
+  minWidth: number;
 };
 
 export type VectorFieldLayer = NCTGraphiteLayerRecord & {
@@ -142,12 +171,23 @@ export type DotShadingLayer = NCTGraphiteLayerRecord & {
 };
 
 export type CellMeshLayer = CellPaintLayer | HullLayer;
-export type GridPaintLayer = CellPaintLayer | HullLayer | MetaballLayer | VectorFieldLayer | DotShadingLayer;
+export type BrushMode = 'cell-paint' | 'hull' | 'metaball' | 'vector-field' | 'dot-shading';
+export type GridPaintLayer = (CellPaintLayer | HullLayer | MetaballLayer | VectorFieldLayer | DotShadingLayer) & {
+  modeContents?: Partial<Record<BrushMode, GridPaintLayer>>;
+};
 export type GridPaintDocument = NCTGraphiteDocument<GridPaintLayer>;
-export type PaintAction = 'paint' | 'erase' | 'toggle' | 'inflate' | 'smooth' | 'placeNeg' | 'attractor' | 'clear';
+export type PaintAction = 'paint' | 'erase' | 'toggle' | 'inflate' | 'smooth' | 'placeNeg' | 'attractor' | 'clear' | 'bridge' | 'subdivide' | 'coarsen' | 'scaleDown' | 'scaleUp' | `op:${string}`;
+
+const ADAPTIVE_COMMANDS: NCTGraphiteCommandDef[] = [
+  { id: 'subdivide', label: 'Subdivide', desc: 'Split cells under the brush', defaultKey: 'd' },
+  { id: 'coarsen', label: 'Coarsen', desc: 'Restore parent cells under the brush', defaultKey: 's' },
+  { id: 'scaleDown', label: 'Shrink cells', desc: 'Reduce painted cell size', defaultKey: 't' },
+  { id: 'scaleUp', label: 'Grow cells', desc: 'Increase painted cell size', defaultKey: 'y' },
+];
 
 export const CELL_PAINT_COMMANDS: NCTGraphiteCommandDef[] = [
   { id: 'paint', label: 'Paint', desc: 'Activate primary color', defaultKey: 'f' },
+  ...ADAPTIVE_COMMANDS,
   { id: 'erase', label: 'Erase', desc: 'Deactivate cells', defaultKey: 'e' },
   { id: 'toggle', label: 'Toggle', desc: 'Flip cells under the brush', defaultKey: 'q' },
   { id: 'clear', label: 'Clear', desc: 'Clear this layer', defaultKey: 'x' },
@@ -162,6 +202,7 @@ export const CELL_PAINT_COMMANDS: NCTGraphiteCommandDef[] = [
 
 export const HULL_COMMANDS: NCTGraphiteCommandDef[] = [
   { id: 'paint', label: 'Activate', desc: 'Paint cells under the brush', defaultKey: 'f' },
+  ...ADAPTIVE_COMMANDS,
   { id: 'erase', label: 'Erase', desc: 'Remove cells under the brush', defaultKey: 'e' },
   { id: 'clear', label: 'Clear', desc: 'Clear this layer', defaultKey: 'x' },
   { id: 'newColor', label: 'New color', desc: 'Cycle palette', defaultKey: 'c' },
@@ -185,6 +226,8 @@ export const METABALL_COMMANDS: NCTGraphiteCommandDef[] = [
   { id: 'inflate', label: 'Inflate', desc: 'Grow blobs under the brush', defaultKey: 'g' },
   { id: 'placeNeg', label: 'Hole', desc: 'Stamp a negative hole', defaultKey: 'h' },
   { id: 'erase', label: 'Erase', desc: 'Remove blobs under the brush', defaultKey: 'e' },
+  { id: 'smooth', label: 'Smooth', desc: 'Relax blobs toward their neighbors and grid', defaultKey: 'q' },
+  { id: 'bridge', label: 'Bridge', desc: 'Place a neck blob between nearest blobs', defaultKey: 'b' },
   { id: 'newColor', label: 'New color', desc: 'Cycle color group', defaultKey: 'n' },
   { id: 'clear', label: 'Clear', desc: 'Clear this layer', defaultKey: 'x' },
   { id: 'brushSmaller', label: 'Brush −', desc: 'Decrease radius', defaultKey: '[' },
@@ -193,6 +236,7 @@ export const METABALL_COMMANDS: NCTGraphiteCommandDef[] = [
 
 export const VECTOR_COMMANDS: NCTGraphiteCommandDef[] = [
   { id: 'paint', label: 'Paint', desc: 'Stamp flow in the brush', defaultKey: 'f' },
+  ...VECTOR_BRUSH_OPS.filter(op => op.picker && op.key).map(op => ({ id: `op:${op.id}`, label: op.label, desc: op.blurb, defaultKey: op.key! })),
   { id: 'erase', label: 'Erase', desc: 'Zero vectors in the brush', defaultKey: 'e' },
   { id: 'smooth', label: 'Smooth', desc: 'Average neighbors in the brush', defaultKey: 'q' },
   { id: 'attractor', label: 'Attractor', desc: 'Drop attractor at the brush', defaultKey: 'n' },
@@ -208,25 +252,10 @@ export const DOT_COMMANDS: NCTGraphiteCommandDef[] = [
   { id: 'clear', label: 'Clear', desc: 'Reset gain in the brush', defaultKey: 'x' },
   { id: 'newColor', label: 'Shape', desc: 'Cycle stamp shape', defaultKey: 'c' },
   { id: 'reJitter', label: 'Re-jitter', desc: 'Scatter sample positions again', defaultKey: 'r' },
+  { id: 'intensityDown', label: 'Intensity −', desc: 'Decrease brush intensity', defaultKey: '-' },
+  { id: 'intensityUp', label: 'Intensity +', desc: 'Increase brush intensity', defaultKey: '=' },
   { id: 'brushSmaller', label: 'Brush −', desc: 'Decrease radius', defaultKey: '[' },
   { id: 'brushLarger', label: 'Brush +', desc: 'Increase radius', defaultKey: ']' },
-];
-
-const GRID_OPTIONS = [
-  { value: 'hex-flat', label: 'Hex flat' },
-  { value: 'hex-pointy', label: 'Hex pointy' },
-  { value: 'square', label: 'Square' },
-];
-
-export const CELL_PAINT_PARAMETERS: NCTParameterDefinition[] = [
-  { id: 'kind', label: 'Grid', type: 'select', defaultValue: 'hex-flat', options: GRID_OPTIONS },
-  { id: 'size', label: 'Cell size', type: 'number', min: 12, max: 48, step: 1, defaultValue: 28 },
-  { id: 'columns', label: 'Columns', type: 'number', min: 5, max: 40, step: 1, defaultValue: 22 },
-  { id: 'rows', label: 'Rows', type: 'number', min: 5, max: 40, step: 1, defaultValue: 16 },
-  { id: 'brushRadius', label: 'Brush', type: 'number', min: 16, max: 160, step: 4, defaultValue: 56 },
-  { id: 'falloff', label: 'Falloff', type: 'number', min: 0, max: 1, step: 0.05, defaultValue: 0 },
-  { id: 'showGrid', label: 'Show grid', type: 'boolean', defaultValue: true },
-  { id: 'showCenters', label: 'Centers', type: 'boolean', defaultValue: false },
 ];
 
 const HULL_GRID_OPTIONS = [
@@ -238,7 +267,27 @@ const HULL_GRID_OPTIONS = [
   { value: 'tri-vert', label: 'Tri vert' },
 ];
 
+const ADAPTIVE_PARAMETERS: NCTParameterDefinition[] = [
+  { id: 'subdivideDepth', label: 'Subdivision depth', type: 'number', min: 0, max: 4, step: 1, defaultValue: 2 },
+  { id: 'subdivideTarget', label: 'Subdivision target', type: 'select', defaultValue: 'shape', options: [{ value: 'shape', label: 'Painted' }, { value: 'grid', label: 'Grid' }] },
+  { id: 'subdivideFalloff', label: 'Subdivision falloff', type: 'boolean', defaultValue: false },
+];
+
+export const CELL_PAINT_PARAMETERS: NCTParameterDefinition[] = [
+  { id: 'kind', label: 'Grid', type: 'select', defaultValue: 'hex-flat', options: HULL_GRID_OPTIONS },
+  { id: 'size', label: 'Cell size', type: 'number', min: 12, max: 48, step: 1, defaultValue: 28 },
+  { id: 'brushRadius', label: 'Brush', type: 'number', min: 16, max: 160, step: 4, defaultValue: 56 },
+  { id: 'falloff', label: 'Falloff', type: 'number', min: 0, max: 1, step: 0.05, defaultValue: 0 },
+  { id: 'showGrid', label: 'Show grid', type: 'boolean', defaultValue: true },
+  { id: 'showCenters', label: 'Centers', type: 'boolean', defaultValue: false },
+  ...ADAPTIVE_PARAMETERS,
+  { id: 'hullMode', label: 'Hull outline', type: 'select', defaultValue: 'off', options: [{ value: 'off', label: 'Off' }, { value: 'tight', label: 'Tight' }, { value: 'smooth', label: 'Smooth' }, { value: 'convex', label: 'Convex' }, { value: 'concave', label: 'Concave' }] },
+];
+
+
+
 export const HULL_PARAMETERS: NCTParameterDefinition[] = [
+  ...ADAPTIVE_PARAMETERS,
   { id: 'kind', label: 'Grid', type: 'select', defaultValue: 'hex-flat', options: HULL_GRID_OPTIONS },
   { id: 'size', label: 'Cell size', type: 'number', min: 8, max: 40, step: 1, defaultValue: 14 },
   { id: 'brushRadius', label: 'Brush', type: 'number', min: 16, max: 160, step: 4, defaultValue: 64 },
@@ -260,6 +309,9 @@ export const METABALL_PARAMETERS: NCTParameterDefinition[] = [
     { value: 'circle', label: 'Circle' },
     { value: 'roundrect', label: 'Round rect' },
   ] },
+  { id: 'snap', label: 'Snap to grid', type: 'boolean', defaultValue: false },
+  { id: 'rectAspect', label: 'Stamp aspect', type: 'number', min: 1, max: 3, step: 0.05, defaultValue: 1.7 },
+  { id: 'cornerT', label: 'Stamp corner', type: 'number', min: 0.25, max: 1, step: 0.05, defaultValue: 0.55 },
   { id: 'gridResolution', label: 'Field grid', type: 'number', min: 16, max: 96, step: 4, defaultValue: 48 },
   { id: 'goo', label: 'Goo', type: 'number', min: 0.2, max: 1.2, step: 0.05, defaultValue: 0.8 },
   { id: 'kFactor', label: 'Bridge K', type: 'number', min: 1, max: 4, step: 0.1, defaultValue: 2.5 },
@@ -270,15 +322,27 @@ export const METABALL_PARAMETERS: NCTParameterDefinition[] = [
 ];
 
 export const VECTOR_PARAMETERS: NCTParameterDefinition[] = [
-  { id: 'mode', label: 'Mode', type: 'select', defaultValue: 'velocity', options: [
-    { value: 'seek', label: 'Seek' },
-    { value: 'velocity', label: 'Velocity' },
-    { value: 'swirl', label: 'Swirl' },
-  ] },
+  { id: 'gridKind', label: 'Grid', type: 'select', defaultValue: 'square', options: [{ value: 'square', label: 'Square' }, { value: 'triangle', label: 'Triangle' }, { value: 'hex', label: 'Hex' }] },
+  { id: 'showGrid', label: 'Show grid', type: 'boolean', defaultValue: false },
+  { id: 'mode', label: 'Mode', type: 'select', defaultValue: 'velocity', options: vectorBrushPickerOps().map((op) => ({
+    value: op.id,
+    label: op.label,
+  })) },
+  { id: 'shapeMode', label: 'Shape', type: 'select', defaultValue: 'off', options: [{ value: 'off', label: 'Off' }, { value: 'magnitude', label: 'Magnitude' }, { value: 'strokes', label: 'Vector strokes' }, { value: 'streamlines', label: 'Streamlines' }] },
+  { id: 'shapeThreshold', label: 'Threshold', type: 'number', min: 0.05, max: 3, step: 0.05, defaultValue: 0.3 },
+  { id: 'shapeThickness', label: 'Thickness', type: 'number', min: 2, max: 50, step: 1, defaultValue: 8 },
+  { id: 'shapeMerge', label: 'Merge radius', type: 'number', min: 0, max: 40, step: 1, defaultValue: 6 },
   { id: 'columns', label: 'Columns', type: 'number', min: 8, max: 80, step: 1, defaultValue: 48 },
   { id: 'rows', label: 'Rows', type: 'number', min: 8, max: 60, step: 1, defaultValue: 32 },
   { id: 'strength', label: 'Strength', type: 'number', min: 0.2, max: 3, step: 0.1, defaultValue: 1 },
   { id: 'brushRadius', label: 'Brush', type: 'number', min: 16, max: 240, step: 4, defaultValue: 90 },
+  { id: 'angleMin', label: 'Angle min', type: 'number', min: 0, max: 360, step: 1, defaultValue: 0 },
+  { id: 'angleMax', label: 'Angle max', type: 'number', min: 0, max: 360, step: 1, defaultValue: 360 },
+  { id: 'angleStep', label: 'Angle step', type: 'number', min: 0, max: 90, step: 1, defaultValue: 0 },
+  { id: 'lengthMin', label: 'Length min', type: 'number', min: 0, max: 8, step: 0.1, defaultValue: 0 },
+  { id: 'lengthMax', label: 'Length max', type: 'number', min: 0, max: 8, step: 0.1, defaultValue: 3 },
+  { id: 'weight', label: 'Weight', type: 'number', min: 0, max: 8, step: 0.1, defaultValue: 2.2 },
+  { id: 'minWidth', label: 'Min width', type: 'number', min: 0.5, max: 8, step: 0.1, defaultValue: 1 },
   { id: 'showVectors', label: 'Show vectors', type: 'boolean', defaultValue: true },
   { id: 'hoverThin', label: 'Hover thin', type: 'boolean', defaultValue: true },
 ];
@@ -321,7 +385,8 @@ export const DOT_PARAMETERS: NCTParameterDefinition[] = [
 ];
 
 export function defaultCanvas(): NCTGraphiteDocumentCanvas {
-  return { width: 960, height: 720, background: '#fdfaf3' };
+  // Document coordinates use 20 units per inch.
+  return { width: 48 * 20, height: 36 * 20, background: '#ffffff' };
 }
 
 export function createHullLayer(partial: Partial<HullLayer> = {}): HullLayer {
@@ -347,7 +412,7 @@ export function createCellPaintLayer(partial: Partial<CellPaintLayer> = {}): Cel
     mode: 'cell-paint',
     data: { cells: {} },
     settings: {
-      kind: 'hex-flat', size: 28, columns: 22, rows: 16, brushRadius: 56,
+      kind: 'hex-flat', size: 28, columns: 22, rows: 16, brushRadius: 56, hullMode: 'off',
       falloff: 0, showGrid: true, showCenters: false, colorIndex: 0,
       ...partial.settings,
     },
@@ -355,7 +420,7 @@ export function createCellPaintLayer(partial: Partial<CellPaintLayer> = {}): Cel
     mode: 'cell-paint',
     data: partial.data ?? { cells: {} },
     settings: {
-      kind: 'hex-flat', size: 28, columns: 22, rows: 16, brushRadius: 56,
+      kind: 'hex-flat', size: 28, columns: 22, rows: 16, brushRadius: 56, hullMode: 'off',
       falloff: 0, showGrid: true, showCenters: false, colorIndex: 0,
       ...partial.settings,
     },
@@ -387,8 +452,9 @@ export function createMetaballLayer(partial: Partial<MetaballLayer> = {}): Metab
 
 export function createVectorFieldLayer(canvas: NCTGraphiteDocumentCanvas, partial: Partial<VectorFieldLayer> = {}): VectorFieldLayer {
   const settings = {
-    columns: 48, rows: 32, mode: 'velocity' as VectorFieldMode, strength: 1, brushRadius: 90,
+    columns: 48, rows: 32, gridKind: 'square' as VectorGridKind, showGrid: false, shapeMode: 'off' as const, shapeThreshold: 0.3, shapeThickness: 8, shapeMerge: 6, mode: 'velocity' as VectorFieldMode, strength: 1, brushRadius: 90,
     showVectors: true, hoverThin: true, colorIndex: 0,
+    angleMin: 0, angleMax: 360, angleStep: 0, lengthMin: 0, lengthMax: 3, weight: 2.2, minWidth: 1,
     ...partial.settings,
   };
   return {
@@ -399,7 +465,7 @@ export function createVectorFieldLayer(canvas: NCTGraphiteDocumentCanvas, partia
     ...partial,
     mode: 'vector-field',
     settings,
-    data: partial.data ?? { vectors: makeVectorField(settings.columns, settings.rows, canvas.width, canvas.height), attractors: [] },
+    data: partial.data ?? { vectors: makeGridVectors(settings.gridKind, settings.columns, settings.rows, canvas), attractors: [] },
   };
 }
 
@@ -429,42 +495,74 @@ export function createDotShadingLayer(canvas: NCTGraphiteDocumentCanvas, partial
   };
 }
 
-export function createInitialDocument(): GridPaintDocument {
-  const canvas = defaultCanvas();
-  const hull = createHullLayer();
-  const paint = createCellPaintLayer();
-  const dots = createDotShadingLayer(canvas);
-  const metaball = createMetaballLayer();
-  const vector = createVectorFieldLayer(canvas);
+export function createUnifiedDocument(): GridPaintDocument {
+  const canvas = { ...defaultCanvas(), width: 144 * 20, height: 108 * 20 };
+  const paint = createCellPaintLayer({ name: 'Layer 1' });
   return NCTGraphiteDocument.untitled({
     displayName: 'Grid Paint',
     canvas,
-    layers: [hull, paint, dots, metaball, vector],
+    layers: [paint],
     activeLayerId: paint.id,
   });
+}
+
+export function createInitialDocument(): GridPaintDocument {
+  const canvas = { ...defaultCanvas(), width: 144 * 20, height: 108 * 20 };
+  const hull = createHullLayer(), paint = createCellPaintLayer();
+  return NCTGraphiteDocument.untitled({ displayName: 'Grid Paint', canvas, layers: [hull, paint, createDotShadingLayer(canvas), createMetaballLayer(), createVectorFieldLayer(canvas)], activeLayerId: paint.id });
+}
+
+const emptyModes = new WeakMap<GridPaintLayer, Map<string, GridPaintLayer>>();
+export function modeLayer(layer: GridPaintLayer, mode: BrushMode, canvas: NCTGraphiteDocumentCanvas): GridPaintLayer {
+  if (layer.mode === mode) return layer;
+  const saved = layer.modeContents?.[mode];
+  if (saved) return { ...saved, visible: layer.visible, locked: layer.locked, opacity: layer.opacity };
+  let cached = emptyModes.get(layer);
+  if (!cached) { cached = new Map(); emptyModes.set(layer, cached); }
+  const key = `${mode}:${canvas.width}:${canvas.height}`;
+  const previous = cached.get(key);
+  if (previous) return previous;
+  const created = mode === 'hull' ? createHullLayer() : mode === 'metaball' ? createMetaballLayer() : mode === 'dot-shading' ? createDotShadingLayer(canvas) : mode === 'vector-field' ? createVectorFieldLayer(canvas) : createCellPaintLayer();
+  const part = { ...created, id: `${layer.id}:${mode}`, visible: layer.visible, locked: layer.locked, opacity: layer.opacity };
+  cached.set(key, part);
+  return part;
+}
+
+export function updateModeLayer(layer: GridPaintLayer, mode: BrushMode, canvas: NCTGraphiteDocumentCanvas, update: (part: GridPaintLayer) => GridPaintLayer): GridPaintLayer {
+  if (layer.mode === mode) return update(layer);
+  const part = modeLayer(layer, mode, canvas);
+  const next = update(part);
+  if (next === part) return layer;
+  return { ...layer, modeContents: { ...layer.modeContents, [mode]: next } };
+}
+
+export function layerContents(layer: GridPaintLayer): GridPaintLayer[] {
+  return [layer, ...Object.values(layer.modeContents ?? {}).filter((item): item is GridPaintLayer => !!item)];
 }
 
 export function layerGridSpec(layer: CellMeshLayer, canvas: NCTGraphiteDocumentCanvas): NCTGraphiteGridSpec {
   return { kind: layer.settings.kind, size: layer.settings.size, origin: { x: canvas.width / 2, y: canvas.height / 2 } };
 }
 
-export function layerLattice(layer: CellMeshLayer, canvas: NCTGraphiteDocumentCanvas): NCTGraphiteGridCell[] {
-  const spec = layerGridSpec(layer, canvas);
-  if (layer.mode === 'hull') {
-    return gridCellsInBounds(spec, { minX: 0, minY: 0, maxX: canvas.width, maxY: canvas.height });
-  }
-  const qRange = Math.floor(layer.settings.columns / 2);
-  const rRange = Math.floor(layer.settings.rows / 2);
-  const cells: NCTGraphiteGridCell[] = [];
-  const margin = spec.size * 2;
-  for (let q = -qRange; q <= qRange; q++) {
-    for (let r = -rRange; r <= rRange; r++) {
-      const cell = gridCell(spec, { q, r });
-      if (cell.center.x < -margin || cell.center.x > canvas.width + margin || cell.center.y < -margin || cell.center.y > canvas.height + margin) continue;
-      cells.push(cell);
-    }
-  }
+function rootLattice(layer: CellMeshLayer, canvas: NCTGraphiteDocumentCanvas): NCTGraphiteGridCell[] {
+  return gridCellsInBounds(layerGridSpec(layer, canvas), { minX: 0, minY: 0, maxX: canvas.width, maxY: canvas.height });
+}
+
+const latticeCache = new Map<string, { key: string; splits: CellMeshLayer['data']['splits']; cells: AdaptiveCell[] }>();
+export function layerLattice(layer: CellMeshLayer, canvas: NCTGraphiteDocumentCanvas): AdaptiveCell[] {
+  const key = `${canvas.width},${canvas.height},${layer.settings.kind},${layer.settings.size}`;
+  const cached = latticeCache.get(layer.id);
+  if (cached?.key === key && cached.splits === layer.data.splits) return cached.cells;
+  const cells = adaptiveLattice(rootLattice(layer, canvas), layer.data.splits);
+  if (latticeCache.size >= 12 && !cached) latticeCache.delete(latticeCache.keys().next().value!);
+  latticeCache.set(layer.id, { key, splits: layer.data.splits, cells });
   return cells;
+}
+
+function brushLattice(layer: CellMeshLayer, canvas: NCTGraphiteDocumentCanvas, point: NCTGraphitePoint): AdaptiveCell[] {
+  const radius = layer.settings.brushRadius + layer.settings.size * 2;
+  const bounds = { minX: Math.max(0, point.x - radius), minY: Math.max(0, point.y - radius), maxX: Math.min(canvas.width, point.x + radius), maxY: Math.min(canvas.height, point.y + radius) };
+  return adaptiveLattice(gridCellsInBounds(layerGridSpec(layer, canvas), bounds), layer.data.splits);
 }
 
 export function cellsUnderBrush(
@@ -491,7 +589,7 @@ function paintCellMeshAt(
   point: NCTGraphitePoint,
   action: PaintAction,
 ): CellMeshLayer {
-  const lattice = layerLattice(layer, canvas);
+  const lattice = brushLattice(layer, canvas, point);
   const falloff = layer.mode === 'cell-paint' ? layer.settings.falloff : 0;
   const hits = cellsUnderBrush(lattice, point, layer.settings.brushRadius, layer.settings.size, falloff);
   if (hits.length === 0) return layer;
@@ -511,16 +609,69 @@ function paintCellMeshAt(
       changed = true;
     }
   }
-  return changed ? { ...layer, data: { cells } } : layer;
+  return changed ? { ...layer, data: { ...layer.data, cells } } : layer;
+}
+
+/** Edit the adaptive mesh without changing the base lattice or mutating document history. */
+function editAdaptiveCells(layer: CellMeshLayer, canvas: NCTGraphiteDocumentCanvas, point: NCTGraphitePoint, action: 'subdivide' | 'coarsen' | 'scaleDown' | 'scaleUp'): CellMeshLayer {
+  const leaves = brushLattice(layer, canvas, point);
+  const radius = layer.settings.brushRadius;
+  const target = layer.settings.subdivideTarget ?? 'shape';
+  const hits = leaves.filter(cell => Math.hypot(cell.center.x - point.x, cell.center.y - point.y) <= radius && (action === 'scaleDown' || action === 'scaleUp' || target === 'grid' || !!layer.data.cells[cell.id]));
+  if (!hits.length) return layer;
+  const cells = { ...layer.data.cells }, splits = { ...layer.data.splits }, scales = { ...layer.data.scales };
+  if (action === 'scaleDown' || action === 'scaleUp') {
+    let changed = false;
+    for (const cell of hits) {
+      const old = scales[cell.id] ?? 1, next = Math.max(0.05, Math.min(1, old + (action === 'scaleUp' ? 0.05 : -0.05)));
+      if (old !== next) { scales[cell.id] = next; changed = true; }
+    }
+    return changed ? { ...layer, data: { ...layer.data, scales } } : layer;
+  }
+  if (action === 'subdivide') {
+    const depth = Math.max(0, Math.min(4, layer.settings.subdivideDepth ?? 2));
+    const candidates = hits.filter(cell => cell.level < depth && (!(layer.settings.subdivideFalloff ?? false) || cell.level < Math.ceil(depth * Math.max(0, 1 - Math.hypot(cell.center.x - point.x, cell.center.y - point.y) / radius))));
+    if (!candidates.length) return layer;
+    const minLevel = Math.min(...candidates.map(cell => cell.level));
+    for (const cell of candidates.filter(c => c.level === minLevel)) {
+      const painted = cells[cell.id]; delete cells[cell.id]; splits[cell.id] = true;
+      for (const child of childCells(cell)) {
+        if (painted) cells[child.id] = { ...painted };
+        if (scales[cell.id] !== undefined) scales[child.id] = scales[cell.id];
+      }
+      delete scales[cell.id];
+    }
+  } else {
+    const deepest = Math.max(...hits.map(cell => cell.level));
+    if (!deepest) return layer;
+    const parents = new Set(hits.filter(cell => cell.level === deepest && cell.parentId).map(cell => cell.parentId!));
+    let changed = false;
+    for (const parent of parents) {
+      const children = leaves.filter(cell => cell.parentId === parent);
+      // Only merge when every direct child is a leaf.
+      if (!children.length || Object.keys(splits).some(id => id.startsWith(`${parent}/`) && splits[id])) continue;
+      const painted = children.map(child => cells[child.id]).find(Boolean);
+      const sizes = children.map(child => scales[child.id]).filter((v): v is number => v !== undefined);
+      for (const child of children) { delete cells[child.id]; delete scales[child.id]; }
+      if (painted) cells[parent] = { ...painted };
+      if (sizes.length) scales[parent] = sizes.reduce((a, b) => a + b, 0) / sizes.length;
+      delete splits[parent]; changed = true;
+    }
+    if (!changed) return layer;
+  }
+  return { ...layer, data: { ...layer.data, cells, splits, scales } };
 }
 
 function metaballStampCenters(layer: MetaballLayer, point: NCTGraphitePoint): { x: number; y: number; r: number }[] {
   const radius = Math.max(10, layer.settings.brushRadius * 0.42);
-  if (layer.settings.stampShape === 'roundrect') return roundRectStamp(point.x, point.y, radius).centers;
+  if (layer.settings.stampShape === 'roundrect') return roundRectStamp(point.x, point.y, radius, layer.settings.rectAspect ?? 1.7, layer.settings.cornerT ?? 0.55).centers;
   return [{ x: point.x, y: point.y, r: radius }];
 }
 
-function paintMetaballAt(layer: MetaballLayer, point: NCTGraphitePoint, action: PaintAction): MetaballLayer {
+function paintMetaballAt(layer: MetaballLayer, canvas: NCTGraphiteDocumentCanvas, point: NCTGraphitePoint, action: PaintAction): MetaballLayer {
+  const cols = layer.settings.gridResolution;
+  const rows = Math.max(8, Math.round(cols * canvas.height / canvas.width));
+  const snapPoint = (p: NCTGraphitePoint) => ({ x: Math.round(p.x / canvas.width * cols) * canvas.width / cols, y: Math.round(p.y / canvas.height * rows) * canvas.height / rows });
   const radius = layer.settings.brushRadius;
   if (action === 'erase') {
     const blobs = layer.data.blobs.filter((blob) => Math.hypot(blob.x - point.x, blob.y - point.y) > radius + blob.r * 0.35);
@@ -535,7 +686,21 @@ function paintMetaballAt(layer: MetaballLayer, point: NCTGraphitePoint, action: 
     });
     return changed ? { ...layer, data: { blobs } } : layer;
   }
-  const type = action === 'placeNeg' ? 'negative' : 'positive';
+  if (action === 'smooth') {
+    const near = layer.data.blobs.filter(b => Math.hypot(b.x - point.x, b.y - point.y) < radius);
+    if (!near.length) return layer;
+    const center = { x: near.reduce((n, b) => n + b.x, 0) / near.length, y: near.reduce((n, b) => n + b.y, 0) / near.length };
+    return { ...layer, data: { blobs: layer.data.blobs.map(b => { if (!near.includes(b)) return b; const grid = snapPoint(b); return { ...b, x: b.x * 0.92 + center.x * 0.04 + grid.x * 0.04, y: b.y * 0.92 + center.y * 0.04 + grid.y * 0.04, r: b.r * 0.995 + 0.2 }; }) } };
+  }
+  if (action === 'bridge') {
+    const nearest = layer.data.blobs.filter(b => b.type !== 'negative' && b.colorGroup === layer.settings.colorIndex).sort((a, b) => Math.hypot(a.x - point.x, a.y - point.y) - Math.hypot(b.x - point.x, b.y - point.y)).slice(0, 2);
+    if (nearest.length < 2) return layer;
+    const [a, b] = nearest;
+    return { ...layer, data: { blobs: [...layer.data.blobs, { id: createNCTGraphiteLayerId(), x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, r: Math.min(a.r, b.r) * 0.55, type: 'positive', colorGroup: a.colorGroup, color: a.color }] } };
+  }
+  if (action !== 'paint' && action !== 'placeNeg') return layer;
+  if (layer.settings.snap) point = snapPoint(point);
+  const type = action === 'placeNeg'  ? 'negative' : 'positive';
   const color = PALETTE[layer.settings.colorIndex % PALETTE.length];
   const added: MetaballBlob[] = metaballStampCenters(layer, point).map((center) => ({
     id: createNCTGraphiteLayerId(),
@@ -549,28 +714,55 @@ function paintMetaballAt(layer: MetaballLayer, point: NCTGraphitePoint, action: 
   return { ...layer, data: { blobs: [...layer.data.blobs, ...added] } };
 }
 
+function vectorLimitsOf(settings: VectorFieldSettings): VectorFieldLimits {
+  return {
+    angleMin: settings.angleMin ?? 0,
+    angleMax: settings.angleMax ?? 360,
+    angleStep: settings.angleStep ?? 0,
+    lengthMin: settings.lengthMin ?? 0,
+    lengthMax: settings.lengthMax ?? 3,
+  };
+}
+
+const VECTOR_LIMIT_IDS = new Set(['angleMin', 'angleMax', 'angleStep', 'lengthMin', 'lengthMax']);
+
 function paintVectorAt(
   layer: VectorFieldLayer,
   point: NCTGraphitePoint,
   action: PaintAction,
   extra?: { velocityX?: number; velocityY?: number },
+  canvas?: NCTGraphiteDocumentCanvas,
 ): VectorFieldLayer {
   if (action === 'attractor') {
-    const attractor = { id: createNCTGraphiteLayerId(), x: point.x, y: point.y, r: layer.settings.brushRadius, orbit: layer.settings.mode === 'swirl' };
+    const attractor = {
+      id: createNCTGraphiteLayerId(),
+      x: point.x,
+      y: point.y,
+      r: layer.settings.brushRadius,
+      ...(vectorBrushOp(layer.settings.mode).attractor ?? { orbit: false }),
+    };
     return { ...layer, data: { ...layer.data, attractors: [...layer.data.attractors, attractor] } };
   }
   const stampAction = action === 'smooth' ? 'smooth' : action === 'erase' ? 'erase' : 'paint';
-  const vectors = stampVectorField(layer.data.vectors, {
+  const kind = layer.settings.gridKind ?? 'square';
+  const vectors = kind === 'square' ? stampVectorField(layer.data.vectors, {
     columns: layer.settings.columns,
     rows: layer.settings.rows,
     x: point.x,
     y: point.y,
     radius: layer.settings.brushRadius,
     action: stampAction,
+    op: action.startsWith('op:') ? action.slice(3) : undefined,
     mode: layer.settings.mode,
     strength: layer.settings.strength,
     velocityX: extra?.velocityX,
     velocityY: extra?.velocityY,
+    limits: vectorLimitsOf(layer.settings),
+  }) : stampGridVectors(layer.data.vectors, {
+    kind, spacing: Math.min((canvas?.width ?? 960) / layer.settings.columns, (canvas?.height ?? 660) / layer.settings.rows),
+    x: point.x, y: point.y, radius: layer.settings.brushRadius,
+    op: action.startsWith('op:') ? action.slice(3) : stampAction === 'paint' ? layer.settings.mode : stampAction,
+    strength: layer.settings.strength, velocityX: extra?.velocityX, velocityY: extra?.velocityY, limits: vectorLimitsOf(layer.settings),
   });
   return { ...layer, data: { ...layer.data, vectors } };
 }
@@ -616,12 +808,13 @@ export function paintLayerAt(
   extra?: { velocityX?: number; velocityY?: number; brushAngle?: number },
 ): GridPaintLayer {
   if (layer.locked || !layer.visible) return layer;
-  if (layer.mode === 'metaball') return paintMetaballAt(layer, point, action);
-  if (layer.mode === 'vector-field') return paintVectorAt(layer, point, action, extra);
+  if (layer.mode === 'metaball') return paintMetaballAt(layer, canvas, point, action);
+  if (layer.mode === 'vector-field') return paintVectorAt(layer, point, action, extra, canvas);
   if (layer.mode === 'dot-shading') {
     if (action === 'inflate' || action === 'placeNeg' || action === 'attractor' || action === 'toggle') return layer;
     return paintDotAt(layer, canvas, point, action, extra);
   }
+  if (action === 'subdivide' || action === 'coarsen' || action === 'scaleDown' || action === 'scaleUp') return editAdaptiveCells(layer, canvas, point, action);
   if (action === 'inflate' || action === 'smooth' || action === 'placeNeg' || action === 'attractor' || action === 'clear') return layer;
   return paintCellMeshAt(layer, canvas, point, action);
 }
@@ -647,7 +840,7 @@ export function clearLayerPaint(layer: GridPaintLayer): GridPaintLayer {
     return { ...layer, data: { points: layer.data.points.map((point) => ({ ...point, radius: 1 })) } };
   }
   if (Object.keys(layer.data.cells).length === 0) return layer;
-  return { ...layer, data: { cells: {} } };
+  return { ...layer, data: { ...layer.data, cells: {} } };
 }
 
 export function cycleLayerColor(layer: GridPaintLayer): GridPaintLayer {
@@ -680,11 +873,26 @@ export function setLayerSetting(
   value: number | boolean | string,
   canvas?: NCTGraphiteDocumentCanvas,
 ): GridPaintLayer {
-  if (!(id in layer.settings) || (layer.settings as Record<string, unknown>)[id] === value) return layer;
+  if (!(id in layer.settings) && !(layer.mode === 'vector-field' && (id.startsWith('shape') || id === 'gridKind' || id === 'showGrid')) && !(layer.mode === 'cell-paint' && id === 'hullMode') && !(layer.mode === 'metaball' && ['snap', 'rectAspect', 'cornerT'].includes(id)) && !((layer.mode === 'cell-paint' || layer.mode === 'hull') && ['subdivideDepth', 'subdivideTarget', 'subdivideFalloff'].includes(id))) return layer;
+  if ( (layer.settings as Record<string, unknown>)[id] === value) return layer;
   const settings = { ...layer.settings, [id]: value };
+  if (layer.mode === 'vector-field' && id === 'gridKind' && canvas) {
+    const next = { ...layer, settings } as VectorFieldLayer;
+    const spacing = Math.min(canvas.width / layer.settings.columns, canvas.height / layer.settings.rows);
+    const lookup = vectorLookup(layer.data.vectors, spacing);
+    const vectors = makeGridVectors(next.settings.gridKind ?? 'square', next.settings.columns, next.settings.rows, canvas).map(v => ({ ...v, ...lookup.interpolate(v.x, v.y) }));
+    return { ...next, data: { ...next.data, vectors } };
+  }
   if (layer.mode === 'vector-field' && (id === 'columns' || id === 'rows') && canvas) {
     const next = { ...layer, settings } as VectorFieldLayer;
     return rebuildVectorField(next, canvas);
+  }
+  if (layer.mode === 'vector-field' && VECTOR_LIMIT_IDS.has(id)) {
+    const next = { ...layer, settings } as VectorFieldLayer;
+    return {
+      ...next,
+      data: { ...next.data, vectors: constrainVectorField(next.data.vectors, vectorLimitsOf(next.settings)) },
+    };
   }
   if (layer.mode === 'dot-shading' && DOT_LATTICE_RESETS.has(id) && canvas) {
     return rebuildDotLattice({ ...layer, settings } as DotShadingLayer, canvas, id !== 'columns' && id !== 'rows');
@@ -699,7 +907,7 @@ export function rebuildVectorField(layer: VectorFieldLayer, canvas: NCTGraphiteD
   return {
     ...layer,
     data: {
-      vectors: makeVectorField(layer.settings.columns, layer.settings.rows, canvas.width, canvas.height),
+      vectors: makeGridVectors(layer.settings.gridKind ?? 'square', layer.settings.columns, layer.settings.rows, canvas),
       attractors: layer.data.attractors,
     },
   };
@@ -727,16 +935,14 @@ export function parseCellId(id: string): { q: number; r: number; s?: number } | 
   return parts.length >= 3 ? { q: parts[0], r: parts[1], s: parts[2] } : { q: parts[0], r: parts[1] };
 }
 
-function paintedCells(layer: HullLayer, canvas: NCTGraphiteDocumentCanvas) {
-  const spec = layerGridSpec(layer, canvas);
-  return Object.keys(layer.data.cells).flatMap((id) => {
-    const coordinate = parseCellId(id);
-    return coordinate ? [gridCell(spec, coordinate)] : [];
-  });
+function paintedCells(layer: CellMeshLayer, canvas: NCTGraphiteDocumentCanvas) {
+  if (!Object.keys(layer.data.cells).length) return [];
+  const leaves = layerLattice(layer, canvas).filter(cell => !!layer.data.cells[cell.id]);
+  return layer.data.splits && Object.keys(layer.data.splits).length ? resolveAdaptiveEdges(leaves) : leaves;
 }
 
-export function hullOutlines(layer: HullLayer, canvas: NCTGraphiteDocumentCanvas): HullLoop[] {
-  return hullLoopsFromPolygons(paintedCells(layer, canvas), layer.settings.hullMode);
+export function hullOutlines(layer: CellMeshLayer, canvas: NCTGraphiteDocumentCanvas): HullLoop[] {
+  return hullLoopsFromPolygons(paintedCells(layer, canvas), layer.settings.hullMode === 'off' || !layer.settings.hullMode ? 'tight' : layer.settings.hullMode);
 }
 
 export function hullOutline(layer: HullLayer, canvas: NCTGraphiteDocumentCanvas): NCTGraphitePoint[] {

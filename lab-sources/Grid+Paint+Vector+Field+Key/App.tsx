@@ -4,15 +4,15 @@ import {
   NCTGraphiteAppShell, NCTGraphiteStagePanel, NCTGraphiteStageMain,
   NCTGraphiteStageFooter, NCTGraphiteToggle, NCTGraphiteSegmented,
   NCTGraphiteKeyMap, NCTGraphiteDialog, NCTGraphiteToast, useNCTGraphiteCommands,
-  NCTGraphiteButton, makeVectorField, vectorStyle,
+  NCTGraphiteButton, makeVectorField, vectorStyle, stampVectorField, applyVectorAttractors, constrainVectorField, findVectorBrushOp, VECTOR_BRUSH_OPS,
 } from "@nct/nctgraphite";
-import type { NCTGraphiteCommandDef, VectorStyle } from "@nct/nctgraphite";
+import type { NCTGraphiteCommandDef, VectorFieldMode, VectorStyle } from "@nct/nctgraphite";
 export { vectorStyle };
 export type { VectorStyle };
 
-type FieldMode = "seek" | "velocity" | "swirl";
+type FieldMode = VectorFieldMode;
 type Vec = { x: number; y: number; vx: number; vy: number };
-type Attractor = { id: number; x: number; y: number; r: number; orbit: boolean };
+type Attractor = { id: number; x: number; y: number; r: number; orbit: boolean; reverse?: boolean };
 
 const CANVAS_W = 960;
 const CANVAS_H = 680;
@@ -26,29 +26,35 @@ const DOWNLOAD_ICON = svgIcon('<path d="M8 2v8M4.8 7.2L8 10.4l3.2-3.2"/><path d=
 const UPLOAD_ICON = svgIcon('<path d="M8 10.4V2.4M4.8 5.6L8 2.4l3.2 3.2"/><path d="M3 12.5h10"/>');
 const TRASH_ICON = svgIcon('<path d="M3 4.5h10M6.5 4.5V3h3v1.5"/><path d="M4.5 4.5l.7 8.5h5.6l.7-8.5"/><path d="M6.8 7v4M9.2 7v4"/>');
 
+const PICKER_OPS = VECTOR_BRUSH_OPS.filter((op) => op.picker);
+const EDIT_OPS = VECTOR_BRUSH_OPS.filter((op) => !op.picker && op.key);
+
 const VECTOR_COMMANDS: NCTGraphiteCommandDef[] = [
   { id: "paint", label: "Paint / Flow", desc: "Stamp flow in brush", defaultKey: "f" },
-  { id: "paintSeek", label: "Seek Paint", desc: "Momentary seek paint while held", defaultKey: "g" },
-  { id: "paintVelocity", label: "Velocity Paint", desc: "Momentary velocity paint while held", defaultKey: "v" },
-  { id: "paintSwirl", label: "Swirl Paint", desc: "Momentary swirl paint while held", defaultKey: "c" },
-  { id: "erase", label: "Erase", desc: "Zero vectors in brush", defaultKey: "e" },
-  { id: "smooth", label: "Smooth", desc: "Average neighbors in brush", defaultKey: "q" },
+  ...PICKER_OPS.filter((op) => op.key).map((op) => ({
+    id: op.id,
+    label: `${op.label} Paint`,
+    desc: `Momentary ${op.label.toLowerCase()} paint while held`,
+    defaultKey: op.key!,
+  })),
+  ...EDIT_OPS.map((op) => ({
+    id: op.id,
+    label: op.label,
+    desc: op.blurb,
+    defaultKey: op.key!,
+  })),
   { id: "attractor", label: "Attractor", desc: "Drop attractor at brush", defaultKey: "n" },
   { id: "smaller", label: "Brush -", desc: "Shrink brush", defaultKey: "[" },
   { id: "larger", label: "Brush +", desc: "Grow brush", defaultKey: "]" },
   { id: "clear", label: "Clear", desc: "Zero entire field", defaultKey: "x" },
 ];
 
-const PAINT_KEY_IDS = new Set(["paint", "paintSeek", "paintVelocity", "paintSwirl"]);
+const PAINT_KEY_IDS = new Set(["paint", ...PICKER_OPS.map((op) => op.id)]);
 const PAINT_GROUP_IDS = new Set([...PAINT_KEY_IDS, "erase"]);
 const PAINT_COMMANDS = VECTOR_COMMANDS.filter((c) => PAINT_GROUP_IDS.has(c.id));
 const REST_COMMANDS = VECTOR_COMMANDS.filter((c) => !PAINT_GROUP_IDS.has(c.id));
 
-const MODES: { value: FieldMode; label: string }[] = [
-  { value: "seek", label: "SEEK" },
-  { value: "velocity", label: "VELOCITY" },
-  { value: "swirl", label: "SWIRL" },
-];
+const MODES = PICKER_OPS.map((op) => ({ value: op.id, label: op.shortLabel }));
 
 let nextId = 1;
 
@@ -74,6 +80,13 @@ export default function App() {
   const [showAttractors, setShowAttractors] = useState(true);
   const [flowTrails, setFlowTrails] = useState(true);
   const [hoverThin, setHoverThin] = useState(true);
+  const [angleMin, setAngleMin] = useState(0);
+  const [angleMax, setAngleMax] = useState(360);
+  const [angleStep, setAngleStep] = useState(0);
+  const [lengthMin, setLengthMin] = useState(0);
+  const [lengthMax, setLengthMax] = useState(3);
+  const [weight, setWeight] = useState(2.2);
+  const [minWidth, setMinWidth] = useState(1);
   const [toast, setToast] = useState<string | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
 
@@ -86,10 +99,16 @@ export default function App() {
   useEffect(() => { brushRef.current = brush; }, [brush]);
   const attrRef = useRef(attractors);
   useEffect(() => { attrRef.current = attractors; }, [attractors]);
-  const paramRef = useRef({ cols, rows, strength, mode, particleCount, showVectors, showParticles, showAttractors, flowTrails, hoverThin });
+  const limits = { angleMin, angleMax, angleStep, lengthMin, lengthMax };
+  const paramRef = useRef({ cols, rows, strength, mode, particleCount, showVectors, showParticles, showAttractors, flowTrails, hoverThin, limits, weight, minWidth });
   useEffect(() => {
-    paramRef.current = { cols, rows, strength, mode, particleCount, showVectors, showParticles, showAttractors, flowTrails, hoverThin };
-  }, [cols, rows, strength, mode, particleCount, showVectors, showParticles, showAttractors, flowTrails, hoverThin]);
+    paramRef.current = { cols, rows, strength, mode, particleCount, showVectors, showParticles, showAttractors, flowTrails, hoverThin, limits, weight, minWidth };
+  }, [cols, rows, strength, mode, particleCount, showVectors, showParticles, showAttractors, flowTrails, hoverThin, angleMin, angleMax, angleStep, lengthMin, lengthMax, weight, minWidth]);
+  useEffect(() => {
+    const next = constrainVectorField(fieldRef.current, { angleMin, angleMax, angleStep, lengthMin, lengthMax });
+    fieldRef.current = next;
+    setField(next);
+  }, [angleMin, angleMax, angleStep, lengthMin, lengthMax]);
   const partsRef = useRef<{ x: number; y: number }[]>([]);
   // The scene redraws every frame, while this separate layer retains only
   // particle marks. Keeping UI overlays out of the trail buffer prevents the
@@ -102,56 +121,21 @@ export default function App() {
   };
 
   const stampAt = (bx: number, by: number, kind: "paint" | "erase" | "smooth", mvx = 0, mvy = 0, forceMode?: FieldMode) => {
-    const f = fieldRef.current;
     const b = brushRef.current;
     const p = paramRef.current;
-    const mode = forceMode ?? p.mode;
-    const next = f.map((v) => ({ ...v }));
-    for (const v of next) {
-      const d = Math.hypot(v.x - bx, v.y - by);
-      if (d > b.r) continue;
-      const fall = 1 - d / b.r;
-      if (kind === "erase") { v.vx = 0; v.vy = 0; continue; }
-      if (kind === "smooth") continue;
-      const s = p.strength * fall;
-      if (mode === "seek") {
-        const dx = bx - v.x, dy = by - v.y;
-        const m = Math.hypot(dx, dy) || 1;
-        v.vx += (dx / m) * s;
-        v.vy += (dy / m) * s;
-      } else if (mode === "velocity") {
-        v.vx += mvx * s * 0.05;
-        v.vy += mvy * s * 0.05;
-      } else {
-        const dx = v.x - bx, dy = v.y - by;
-        const m = Math.hypot(dx, dy) || 1;
-        v.vx += (-dy / m) * s;
-        v.vy += (dx / m) * s;
-      }
-      const m = mag(v.vx, v.vy);
-      if (m > 3) { v.vx = (v.vx / m) * 3; v.vy = (v.vy / m) * 3; }
-    }
-    if (kind === "smooth") {
-      const idx = (i: number, j: number) => j * p.cols + i;
-      const src = next.map((v) => ({ ...v }));
-      for (let j = 0; j < p.rows; j++) {
-        for (let i = 0; i < p.cols; i++) {
-          const v = src[idx(i, j)];
-          if (Math.hypot(v.x - bx, v.y - by) > b.r) continue;
-          let sx = 0, sy = 0, n = 0;
-          for (let dj = -1; dj <= 1; dj++) {
-            for (let di = -1; di <= 1; di++) {
-              const ii = i + di, jj = j + dj;
-              if (ii < 0 || jj < 0 || ii >= p.cols || jj >= p.rows) continue;
-              sx += src[idx(ii, jj)].vx; sy += src[idx(ii, jj)].vy; n++;
-            }
-          }
-          next[idx(i, j)].vx = sx / n;
-          next[idx(i, j)].vy = sy / n;
-        }
-      }
-    }
-    setField(next);
+    setField(stampVectorField(fieldRef.current, {
+      columns: p.cols,
+      rows: p.rows,
+      x: bx,
+      y: by,
+      radius: b.r,
+      action: kind,
+      mode: forceMode ?? p.mode,
+      strength: p.strength,
+      velocityX: mvx,
+      velocityY: mvy,
+      limits: p.limits,
+    }));
   };
 
   const { keyMap, heldActions } = useNCTGraphiteCommands({
@@ -160,11 +144,13 @@ export default function App() {
     preventDefaultKeys: [" ", "x"],
     onAction: (id) => {
       const b = brushRef.current;
+      const brushOp = findVectorBrushOp(id);
       if (id === "paint") stampAt(b.x, b.y, "paint", b.vx, b.vy);
-      if (id === "erase") stampAt(b.x, b.y, "erase");
-      if (id === "smooth") stampAt(b.x, b.y, "smooth");
+      else if (brushOp?.picker) stampAt(b.x, b.y, "paint", b.vx, b.vy, brushOp.id as FieldMode);
+      else if (brushOp) stampAt(b.x, b.y, brushOp.id as "erase" | "smooth");
       if (id === "attractor") {
-        setAttractors((prev) => [...prev, { id: nextId++, x: b.x, y: b.y, r: b.r, orbit: paramRef.current.mode === "swirl" }]);
+        const dropped = findVectorBrushOp(paramRef.current.mode)?.attractor ?? { orbit: false };
+        setAttractors((prev) => [...prev, { id: nextId++, x: b.x, y: b.y, r: b.r, ...dropped }]);
         flash("ATTRACTOR DROPPED");
       }
       if (id === "smaller") setBrush((p) => ({ ...p, r: Math.max(18, p.r - 12) }));
@@ -174,9 +160,6 @@ export default function App() {
         setAttractors([]);
         flash("FIELD CLEARED");
       }
-      if (id === "paintSeek") stampAt(b.x, b.y, "paint", b.vx, b.vy, "seek");
-      if (id === "paintVelocity") stampAt(b.x, b.y, "paint", b.vx, b.vy, "velocity");
-      if (id === "paintSwirl") stampAt(b.x, b.y, "paint", b.vx, b.vy, "swirl");
     },
     onRebind: (action, key) => flash(`BOUND ${action.toUpperCase()} → [${key.toUpperCase()}]`),
   });
@@ -220,61 +203,43 @@ export default function App() {
       ctx.fillStyle = "#0a0a0f";
       ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
 
-      // attractor influence: tangential swirl or radial pull
-      for (const a of attrRef.current) {
-        for (const v of f) {
-          const dx = v.x - a.x, dy = v.y - a.y;
-          const d = Math.hypot(dx, dy);
-          if (d > a.r || d < 0.001) continue;
-          const fall = 1 - d / a.r;
-          if (a.orbit) {
-            v.vx += (-dy / d) * fall * 0.06;
-            v.vy += (dx / d) * fall * 0.06;
-          } else {
-            v.vx += (-dx / d) * fall * 0.04;
-            v.vy += (-dy / d) * fall * 0.04;
-          }
+      // attractor influence, then the field angle and length gates
+      if (attrRef.current.length > 0) {
+        const influenced = applyVectorAttractors(f, attrRef.current, p.limits);
+        for (let i = 0; i < f.length; i++) {
+          f[i].vx = influenced[i].vx;
+          f[i].vy = influenced[i].vy;
         }
       }
 
       // held paint/erase/smooth apply continuously at the brush;
-      // G/V/C hold a momentary mode that overrides the selected one
+      // a held mode key overrides the selected brush op
       const held = labHeldRef.current;
       if (held.size > 0) {
         const f = fieldRef.current;
         const b = brushRef.current;
-        const force = held.has("paintVelocity") ? "velocity" : held.has("paintSwirl") ? "swirl" : held.has("paintSeek") ? "seek" : null;
-        const next = f.map((v) => ({ ...v }));
-        let touched = false;
-        for (const v of next) {
-          if (Math.hypot(v.x - b.x, v.y - b.y) > b.r) continue;
-          touched = true;
-          if (held.has("erase")) { v.vx = 0; v.vy = 0; }
-          else if (held.has("smooth")) { /* smoothed below in bulk */ }
-          else if (held.has("paint") || force) {
-            const fall = 1 - Math.hypot(v.x - b.x, v.y - b.y) / b.r;
-            const s = paramRef.current.strength * fall;
-            if ((force ?? paramRef.current.mode) === "seek") {
-              const dx = b.x - v.x, dy = b.y - v.y;
-              const m = Math.hypot(dx, dy) || 1;
-              v.vx += (dx / m) * s * 0.2;
-              v.vy += (dy / m) * s * 0.2;
-            } else if ((force ?? paramRef.current.mode) === "velocity") {
-              v.vx += b.vx * s * 0.01;
-              v.vy += b.vy * s * 0.01;
-            } else {
-              const dx = v.x - b.x, dy = v.y - b.y;
-              const m = Math.hypot(dx, dy) || 1;
-              v.vx += (-dy / m) * s * 0.2;
-              v.vy += (dx / m) * s * 0.2;
-            }
+        const force = [...held].map((id) => findVectorBrushOp(id)).find((op) => op?.picker);
+        const op = held.has("erase") ? "erase" : held.has("smooth") ? "smooth" : force?.id ?? (held.has("paint") ? p.mode : null);
+        if (op) {
+          const next = stampVectorField(f, {
+            columns: p.cols,
+            rows: p.rows,
+            x: b.x,
+            y: b.y,
+            radius: b.r,
+            op,
+            strength: p.strength,
+            velocityX: b.vx,
+            velocityY: b.vy,
+            paintScale: 0.2,
+            limits: p.limits,
+          });
+          const now = performance.now();
+          if (now - lastStampRef.current > 80) {
+            lastStampRef.current = now;
+            fieldRef.current = next;
+            setField(next);
           }
-        }
-        const now = performance.now();
-        if (touched && now - lastStampRef.current > 80) {
-          lastStampRef.current = now;
-          fieldRef.current = next;
-          setField(next);
         }
       }
 
@@ -288,11 +253,11 @@ export default function App() {
 
       if (p.showVectors) {
         const held = labHeldRef.current;
-        const painting = held.has("paint") || held.has("erase") || held.has("smooth") || held.has("paintSeek") || held.has("paintVelocity") || held.has("paintSwirl");
+        const painting = held.has("paint") || [...held].some((id) => findVectorBrushOp(id));
         const minCell = Math.min(cw, ch);
         for (const v of f) {
           const inBrush = Math.hypot(v.x - b.x, v.y - b.y) < b.r;
-          const st = vectorStyle(v.vx, v.vy, p.hoverThin && inBrush && !painting);
+          const st = vectorStyle(v.vx, v.vy, p.hoverThin && inBrush && !painting, { weight: p.weight, minWidth: p.minWidth });
           if (st.skip) continue;
           const J = st.m * minCell * 0.9;
           ctx.save();
@@ -326,7 +291,7 @@ export default function App() {
       if (p.showAttractors) {
         for (const a of attrRef.current) {
           ctx.save();
-          ctx.strokeStyle = a.orbit ? "#ff2d95" : "#00e5ff";
+          ctx.strokeStyle = a.orbit ? "#ff2d95" : a.reverse ? "#ffe14a" : "#00e5ff";
           ctx.setLineDash([5, 4]);
           ctx.beginPath();
           ctx.arc(a.x, a.y, a.r, 0, Math.PI * 2);
@@ -481,7 +446,7 @@ export default function App() {
           </div>
           <div>
             <h3 className="text-[11px] tracking-[0.18em] text-[#7a7680] mb-1">CORE LOOP</h3>
-            <p>Aim → hold key → watch particles advect → release. Attractors bend the field: PULL sucks vectors in, ORBIT stirs them around.</p>
+            <p>Aim → hold key → watch particles advect → release. Attractors bend the field: PULL sucks in, PUSH blows out, ORBIT / CW stir both ways.</p>
           </div>
           <div>
             <h3 className="text-[11px] tracking-[0.18em] text-[#7a7680] mb-2">ANGLE → COLOR LEGEND</h3>
@@ -504,8 +469,8 @@ export default function App() {
       </>}
       footer={
       <NCTGraphiteStageFooter>
-        <span>GRID PAINT VECTOR FIELD • SEEK / VELOCITY / SWIRL • BUILT FOR TALKS · NO BACKEND · CANVAS 2D</span>
-        <span className="hidden md:inline">F FLOW • E ERASE • Q SMOOTH • N ATTRACTOR • G/V/C SEEK/VELO/SWIRL</span>
+        <span>GRID PAINT VECTOR FIELD • FLOW, TWIST, AND EDIT • BUILT FOR TALKS · NO BACKEND · CANVAS 2D</span>
+        <span className="hidden md:inline">F PAINTS THE MODE • A/D AMP/DAMP • R ROTATE • S SMUDGE • J DRAIN • T TURB • M NORM • I INVERT</span>
       </NCTGraphiteStageFooter>
       }
     >
@@ -554,11 +519,7 @@ export default function App() {
           <div>
             <div className="text-[11px] tracking-[0.18em] text-[#7a7680] mb-3">FIELD MODE</div>
             <NCTGraphiteSegmented options={MODES} value={mode} onChange={(v) => setMode(v as FieldMode)} />
-            <div className="text-[10px] text-[#7a7680] mt-2 leading-[1.4]">
-              {mode === "seek" && "Vectors point at the cursor. Attractors pull."}
-              {mode === "velocity" && "Vectors follow mouse speed — whip fast for streams."}
-              {mode === "swirl" && "Brush paints vortices. New attractors go orbital."}
-            </div>
+            <div className="text-[10px] text-[#7a7680] mt-2 leading-[1.4]">{findVectorBrushOp(mode)?.blurb}</div>
           </div>
           <div>
             <div className="text-[11px] tracking-[0.18em] text-[#7a7680] mb-3">BRUSH & FIELD</div>
@@ -568,14 +529,24 @@ export default function App() {
             <NCTGraphiteSlider label="PARTICLES" value={particleCount} min={0} max={2000} step={50} format={(v) => `${Math.round(v)}`} onChange={(v) => setParticleCount(Math.round(v))} />
           </div>
           <div>
+            <div className="text-[11px] tracking-[0.18em] text-[#7a7680] mb-3">LIMITS & STROKE</div>
+            <NCTGraphiteSlider label="ANGLE MIN" value={angleMin} min={0} max={360} step={1} format={(v) => `${Math.round(v)}°`} onChange={(v) => setAngleMin(Math.round(v))} />
+            <NCTGraphiteSlider label="ANGLE MAX" value={angleMax} min={0} max={360} step={1} format={(v) => `${Math.round(v)}°`} onChange={(v) => setAngleMax(Math.round(v))} />
+            <NCTGraphiteSlider label="ANGLE STEP" value={angleStep} min={0} max={90} step={1} format={(v) => v < 0.5 ? 'off' : `${Math.round(v)}°`} onChange={(v) => setAngleStep(Math.round(v))} />
+            <NCTGraphiteSlider label="LENGTH MIN" value={lengthMin} min={0} max={8} step={0.1} format={(v) => v.toFixed(1)} onChange={setLengthMin} />
+            <NCTGraphiteSlider label="LENGTH MAX" value={lengthMax} min={0} max={8} step={0.1} format={(v) => v.toFixed(1)} onChange={setLengthMax} />
+            <NCTGraphiteSlider label="WEIGHT" value={weight} min={0} max={8} step={0.1} format={(v) => v.toFixed(1)} onChange={setWeight} />
+            <NCTGraphiteSlider label="MIN WIDTH" value={minWidth} min={0.5} max={8} step={0.1} format={(v) => v.toFixed(1)} onChange={setMinWidth} />
+          </div>
+          <div>
             <div className="text-[11px] tracking-[0.18em] text-[#7a7680] mb-3">ATTRACTORS ({attractors.length})</div>
             <NCTGraphiteStack direction="column" gap={6}>
               {attractors.length === 0 && <div className="text-[11px] text-[#7a7680]">Press N over the canvas to drop one.</div>}
               {attractors.map((a) => (
                 <div key={a.id} className="flex items-center gap-2 p-2 rounded-[8px] bg-[#15151e] border border-[#23232f]">
-                  <div className="w-3 h-3 rounded-full border-2" style={{ borderColor: a.orbit ? "#ff2d95" : "#00e5ff" }} />
+                  <div className="w-3 h-3 rounded-full border-2" style={{ borderColor: a.orbit ? "#ff2d95" : a.reverse ? "#ffe14a" : "#00e5ff" }} />
                   <span className="text-[11px] text-white flex-1">{Math.round(a.x)}, {Math.round(a.y)}</span>
-                  <span className="text-[10px] text-[#7a7680]">{a.orbit ? "ORBIT" : "PULL"}</span>
+                  <span className="text-[10px] text-[#7a7680]">{a.orbit ? (a.reverse ? "CW" : "ORBIT") : a.reverse ? "PUSH" : "PULL"}</span>
                   <button onClick={() => setAttractors((prev) => prev.filter((x) => x.id !== a.id))} className="text-[11px] text-[#7a7680] hover:text-[#ff4d6d]">×</button>
                 </div>
               ))}

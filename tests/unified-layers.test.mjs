@@ -13,7 +13,7 @@ const result = await build({
   platform: 'neutral',
   alias: { '@nct/nctgraphite': nct },
 });
-const { createInitialDocument, paintLayerAt, convexHull, hullOutline, hullOutlines, setLayerKind, paintedCount } = await import(`data:text/javascript;base64,${Buffer.from(result.outputFiles[0].contents).toString('base64')}`);
+const { createInitialDocument, paintLayerAt, convexHull, hullOutline, hullOutlines, setLayerKind, setLayerSetting, paintedCount } = await import(`data:text/javascript;base64,${Buffer.from(result.outputFiles[0].contents).toString('base64')}`);
 
 test('initial document has hull under hex paint and paints only the active layer', () => {
   const doc = createInitialDocument();
@@ -66,6 +66,25 @@ test('metaball and vector-field layers stamp through NCTGraphite graphics', () =
   const field = doc.layers.find((layer) => layer.mode === 'vector-field');
   doc = doc.activating(field.id).updatingLayer(field.id, (layer) => paintLayerAt(layer, doc.snapshot.canvas, { x: 480, y: 360 }, 'paint', { velocityX: 12, velocityY: 0 }));
   assert.ok(paintedCount(doc.activeLayer) > 0);
+});
+
+test('vector angle interval reprojects samples already on the layer', () => {
+  let doc = createInitialDocument();
+  const field = doc.layers.find((layer) => layer.mode === 'vector-field');
+  doc = doc.activating(field.id).updatingLayer(field.id, (layer) => ({
+    ...layer,
+    data: {
+      ...layer.data,
+      vectors: layer.data.vectors.map((sample, index) => (index === 0 ? { ...sample, vx: 2, vy: 0 } : sample)),
+    },
+  }));
+  doc = doc.updatingLayer(doc.activeLayerId, (layer) => setLayerSetting(layer, 'angleMin', 90));
+  doc = doc.updatingLayer(doc.activeLayerId, (layer) => setLayerSetting(layer, 'angleMax', 90));
+  const sample = doc.activeLayer.data.vectors[0];
+  assert.ok(Math.abs(sample.vx) < 1e-6);
+  assert.ok(sample.vy > 1);
+  assert.equal(doc.activeLayer.settings.weight, 2.2);
+  assert.equal(doc.activeLayer.settings.minWidth, 1);
 });
 
 test('dot shading grow stamps sample gain on the edge-aligned lattice', () => {

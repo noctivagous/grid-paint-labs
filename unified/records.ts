@@ -3,6 +3,7 @@
  * record / Vector Field JSON payloads. NCTGraphite owns the document kit;
  * this module owns lab schema mapping.
  */
+import { makeGridVectors, type VectorGridKind } from './vectorGrid';
 import { NCTGraphiteDocument, createNCTGraphiteLayerId, makeSampleLattice, makeVectorField } from '@nct/nctgraphite';
 import type { NCTGraphiteDocumentCanvas, NCTGraphiteGridKind, SampleGainPoint } from '@nct/nctgraphite';
 import {
@@ -200,7 +201,8 @@ function importVectorField(value: Record<string, unknown>, canvas: NCTGraphiteDo
   const columns = typeof value.cols === 'number' ? value.cols : Number(value.columns) || 48;
   const rows = typeof value.rows === 'number' ? value.rows : 32;
   const sourceHeight = typeof value.height === 'number' ? value.height : VECTOR_LAB_HEIGHT;
-  const vectors = makeVectorField(columns, rows, canvas.width, canvas.height);
+  const gridKind: VectorGridKind = value.gridKind === 'hex' || value.gridKind === 'triangle' ? value.gridKind : 'square';
+  const vectors = makeGridVectors(gridKind, columns, rows, canvas);
   if (Array.isArray(value.vectors)) {
     for (let index = 0; index < Math.min(vectors.length, value.vectors.length); index++) {
       const sample = value.vectors[index];
@@ -208,6 +210,7 @@ function importVectorField(value: Record<string, unknown>, canvas: NCTGraphiteDo
         vectors[index].vx = Number(sample[0]) || 0;
         vectors[index].vy = Number(sample[1]) || 0;
       } else if (isRecord(sample)) {
+        if (typeof sample.x === 'number' && typeof sample.y === 'number' && Number.isFinite(sample.x) && Number.isFinite(sample.y)) { vectors[index].x = Number(sample.x); vectors[index].y = remapY(Number(sample.y), sourceHeight, canvas.height); }
         vectors[index].vx = Number(sample.vx) || 0;
         vectors[index].vy = Number(sample.vy) || 0;
       }
@@ -220,10 +223,11 @@ function importVectorField(value: Record<string, unknown>, canvas: NCTGraphiteDo
       y: remapY(Number(item.y) || 0, sourceHeight, canvas.height),
       r: Number(item.r) || 90,
       orbit: !!item.orbit,
+      reverse: !!item.reverse,
     }))
     : [];
   return createVectorFieldLayer(canvas, {
-    settings: { columns, rows },
+    settings: { columns, rows, gridKind },
     data: { vectors, attractors },
   });
 }
@@ -312,6 +316,7 @@ export function openGridPaintFile(text: string, fileName?: string | null): GridP
 }
 
 export function exportLabRecord(layer: GridPaintLayer, canvas: NCTGraphiteDocumentCanvas): { kind: Exclude<LabRecordKind, 'nctgdoc'>; value: Record<string, unknown>; fileName: string } | null {
+  if ((layer.mode === 'cell-paint' || layer.mode === 'hull') && (Object.keys(layer.data.splits ?? {}).length > 0 || Object.keys(layer.data.scales ?? {}).length > 0)) return null;
   if (layer.mode === 'cell-paint') {
     const active = Object.entries(layer.data.cells).flatMap(([id, painted]) => {
       const coordinate = parseCellId(id);
@@ -392,7 +397,8 @@ export function exportLabRecord(layer: GridPaintLayer, canvas: NCTGraphiteDocume
       value: {
         cols: layer.settings.columns,
         rows: layer.settings.rows,
-        vectors: layer.data.vectors.map((sample) => [sample.vx, sample.vy]),
+        gridKind: layer.settings.gridKind ?? 'square',
+        vectors: (layer.settings.gridKind ?? 'square') === 'square' ? layer.data.vectors.map((sample) => [sample.vx, sample.vy]) : layer.data.vectors.map(sample => ({ ...sample })),
         attractors: layer.data.attractors,
         width: canvas.width,
         height: canvas.height,
