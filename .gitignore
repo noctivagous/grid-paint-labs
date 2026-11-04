@@ -11,6 +11,7 @@
 # Dependencies / build output (repo is static single-file HTML demos)
 node_modules/
 dist/
+dist-unified/
 build/
 out/
 .pytest_cache/
