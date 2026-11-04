@@ -44,3 +44,13 @@ test('cell hull setting outlines the same painted cells', () => {
   assert.equal(cells.data.cells, original);
   assert.ok(hullOutlines(cells, canvas).length > 0);
 });
+
+test('dot brush leaves a layer unchanged when no samples are in reach', () => {
+  const doc = createUnifiedDocument();
+  const dots = modeLayer(doc.activeLayer, 'dot-shading', doc.snapshot.canvas);
+  const unchanged = paintLayerAt(dots, doc.snapshot.canvas, { x: -1000, y: -1000 }, 'paint');
+  assert.equal(unchanged, dots);
+  const point = dots.data.points[0];
+  const painted = paintLayerAt(dots, doc.snapshot.canvas, { x: point.x, y: point.y }, 'paint');
+  assert.ok(painted.data.points[0].radius > point.radius);
+});

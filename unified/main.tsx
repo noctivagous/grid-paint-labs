@@ -30,6 +30,7 @@ import {
   layerModeLabel,
   layerContents,
   modeLayer,
+  metaballVectorLayer,
   updateModeLayer,
   type BrushMode,
   layerParameters,
@@ -43,6 +44,7 @@ import {
   type PaintAction,
 } from './layers';
 import { exportLabRecord, openGridPaintFile } from './records';
+import { GridIcon, ModeIcon } from './gridIcons';
 import './style.css';
 
 const POINTER_ACTIONS = new Set(['paint', 'erase', 'toggle', 'inflate', 'smooth', 'placeNeg', 'attractor', 'bridge', 'subdivide', 'coarsen', 'scaleDown', 'scaleUp']);
@@ -99,6 +101,7 @@ function App() {
   const selectedLayer = document.activeLayer;
   const canvasSize = document.snapshot.canvas;
   const active = selectedLayer ? modeLayer(selectedLayer, mode, canvasSize) : null;
+  const commandMode = active?.mode === 'metaball' && active.settings.engine === 'vector' ? 'vector-field' : active?.mode;
 
   function updatePart(doc: GridPaintDocument, update: (layer: GridPaintLayer) => GridPaintLayer, recordUndo = true) {
     return doc.activeLayerId ? doc.updatingLayer(doc.activeLayerId, layer => updateModeLayer(layer, mode, doc.snapshot.canvas, update), { recordUndo }) : doc;
@@ -130,14 +133,14 @@ function App() {
   });
   const metaballCommands = useNCTGraphiteCommands({
     commands: METABALL_COMMANDS,
-    enabled: active?.mode === 'metaball' && live,
+    enabled: commandMode === 'metaball' && live,
     ignoreInputs: true,
     onAction: (id, event) => handleCommand(id, event),
     onKeyUp: () => commitStroke(),
   });
   const vectorCommands = useNCTGraphiteCommands({
     commands: VECTOR_COMMANDS,
-    enabled: active?.mode === 'vector-field' && live,
+    enabled: commandMode === 'vector-field' && live,
     ignoreInputs: true,
     onAction: (id, event) => handleCommand(id, event),
     onKeyUp: () => commitStroke(),
@@ -149,8 +152,8 @@ function App() {
     onAction: (id, event) => handleCommand(id, event),
     onKeyUp: () => commitStroke(),
   });
-  const commands = active?.mode === 'metaball' ? metaballCommands
-      : active?.mode === 'vector-field' ? vectorCommands
+  const commands = commandMode === 'metaball' ? metaballCommands
+      : commandMode === 'vector-field' ? vectorCommands
         : active?.mode === 'dot-shading' ? dotCommands
           : hexCommands;
   const held = commands.heldActions;
@@ -168,8 +171,8 @@ function App() {
 
   function handleCommand(id: string, event?: KeyboardEvent) {
     const point = pointer.current;
-    if (POINTER_ACTIONS.has(id) || (mode === 'vector-field' && id.startsWith('op:')) || (id === 'clear' && mode === 'dot-shading')) {
-      if (event?.repeat && (DISCRETE_POINTER.has(id) || (mode === 'metaball' && (id === 'paint' || id === 'placeNeg')))) return;
+    if (POINTER_ACTIONS.has(id) || (commandMode === 'vector-field' && id.startsWith('op:')) || (id === 'clear' && mode === 'dot-shading')) {
+      if (event?.repeat && (DISCRETE_POINTER.has(id) || (commandMode === 'metaball' && (id === 'paint' || id === 'placeNeg')))) return;
       beginStroke();
       if (point) paintAtPointer(id as PaintAction, false);
       return;
@@ -177,7 +180,7 @@ function App() {
     setDocument((doc) => {
       const layer = doc.activeLayer ? modeLayer(doc.activeLayer, mode, doc.snapshot.canvas) : null;
       if (!layer) return doc;
-      if (id === 'clear') return updatePart(doc, item => item.mode === 'metaball' && !event?.shiftKey ? { ...item, data: { blobs: item.data.blobs.filter(blob => blob.colorGroup !== item.settings.colorIndex) } } : clearLayerPaint(item));
+      if (id === 'clear') return updatePart(doc, item => item.mode === 'metaball' && item.settings.engine !== 'vector' && !event?.shiftKey ? { ...item, data: { ...item.data, blobs: item.data.blobs.filter(blob => blob.colorGroup !== item.settings.colorIndex) } } : clearLayerPaint(item));
       if (id === 'newColor') return updatePart(doc, cycleLayerColor);
       if (id === 'reJitter' && layer.mode === 'dot-shading') {
         return updatePart(doc, (item) => item.mode === 'dot-shading' ? reJitterDotLayer(item, doc.snapshot.canvas) : item);
@@ -219,7 +222,8 @@ function App() {
 
   function exportShapes() {
     const { width, height } = document.snapshot.canvas;
-    const paths = document.visibleLayers.flatMap(layerContents).filter((layer) => layer.mode === 'vector-field').map((layer) => {
+    const paths = document.visibleLayers.flatMap(layerContents).filter((layer) => layer.mode === 'vector-field' || (layer.mode === 'metaball' && layer.settings.engine === 'vector')).map((part) => {
+      const layer = part.mode === 'metaball' ? metaballVectorLayer(part, document.snapshot.canvas) : part;
       if (layer.mode !== 'vector-field') return '';
       const d = vectorShapePath(layer, width, height);
       return d ? `<path d="${d}" fill="${PALETTE[layer.settings.colorIndex % PALETTE.length]}" fill-rule="evenodd" opacity="${layer.opacity ?? 1}"/>` : '';
@@ -363,9 +367,9 @@ function App() {
       x: point.x, y: point.y, radius: layer.settings.brushRadius,
       color: PALETTE[layer.settings.colorIndex % PALETTE.length],
     } : null;
-    const painting = heldPaintAction(held, layer?.mode) != null;
+    const painting = heldPaintAction(held, commandMode) != null;
     drawDocument(p, document, brush, painting, false, mode);
-  }, [document, held, mode, active?.mode === 'vector-field' ? pointerLabel : null]);
+  }, [document, held, mode, commandMode === 'vector-field' ? pointerLabel : null]);
 
   useEffect(() => {
     const p = scope.current;
@@ -375,13 +379,13 @@ function App() {
   }, [document, pointerLabel, mode]);
 
   useEffect(() => {
-    const action = heldPaintAction(held, active?.mode);
-    if (!action || (active?.mode === 'metaball' && (DISCRETE_POINTER.has(action) || action === 'paint'))) return;
+    const action = heldPaintAction(held, commandMode);
+    if (!action || (commandMode === 'metaball' && (DISCRETE_POINTER.has(action) || action === 'paint'))) return;
     const tick = () => paintAtPointer(action, false);
     tick();
     const id = window.setInterval(tick, 32);
     return () => window.clearInterval(id);
-  }, [held, paintAtPointer, active?.mode]);
+  }, [held, paintAtPointer, commandMode]);
 
   useEffect(() => () => {
     const base = strokeBase.current;
@@ -390,9 +394,10 @@ function App() {
   }, [document.activeLayerId, setDocument]);
 
   const modeParameters = active ? layerParameters(active) : [];
-  const gridParameter = modeParameters.find(item => item.id === 'kind' || item.id === 'gridKind');
+  const gridParameter = modeParameters.find(item => item.id === 'kind' || item.id === 'gridKind' || item.id === 'vector:gridKind');
   const parameters = modeParameters.filter(item => item !== gridParameter);
-  const values = active ? Object.fromEntries(parameters.map((item) => [item.id, (active.settings as Record<string, number | boolean | string>)[item.id] ?? item.defaultValue])) : {};
+  const parameterValue = (id: string) => active?.mode === 'metaball' && id.startsWith('vector:') ? (metaballVectorLayer(active, canvasSize).settings as Record<string, number | boolean | string>)[id.slice(7)] : (active?.settings as Record<string, number | boolean | string> | undefined)?.[id];
+  const values = active ? Object.fromEntries(parameters.map(item => [item.id, parameterValue(item.id) ?? item.defaultValue])) : {};
   const parameterSection = (id: string) => {
     if (['mode', 'engine', 'stampShape', 'kind', 'shapeType'].includes(id)) return 'MODE & GEOMETRY';
     if (['columns', 'rows', 'gridResolution', 'size'].includes(id)) return 'GRID';
@@ -403,7 +408,7 @@ function App() {
     if (id.startsWith('show') || id === 'hoverThin') return 'DISPLAY';
     return 'OPTIONS';
   };
-  const countNoun = active?.mode === 'metaball' ? 'BLOBS'
+  const countNoun = active?.mode === 'metaball' ? (active.settings.engine === 'vector' ? 'VECTORS' : 'BLOBS')
     : active?.mode === 'vector-field' ? 'VECTORS'
       : active?.mode === 'dot-shading' ? 'DOTS'
         : 'CELLS';
@@ -450,7 +455,7 @@ function App() {
       <header className="topbar">
         <span className="brand">GRID PAINT <small>LABS</small></span>
         <span className="topbar-label">{document.displayName}{document.edited ? ' •' : ''}</span>
-        <div className="mode-control" role="group" aria-label="Brush mode">{([['cell-paint', 'Cells'], ['metaball', 'Metaballs'], ['vector-field', 'Vectors'], ['dot-shading', 'Dots']] as [BrushMode, string][]).map(([id, label]) => <button type="button" key={id} aria-pressed={mode === id} onClick={() => { commitStroke(); setMode(id); }}>{label}</button>)}</div>
+        <div className="mode-control" role="group" aria-label="Brush mode">{([['cell-paint', 'Cells'], ['metaball', 'Metaballs'], ['vector-field', 'Vectors'], ['dot-shading', 'Dots']] as [BrushMode, string][]).map(([id, label]) => <button type="button" key={id} aria-pressed={mode === id} onClick={() => { commitStroke(); setMode(id); }}><ModeIcon value={id} /><span>{label}</span></button>)}</div>
         <div className="zoom-control">
           <label htmlFor="zoom-slider">Zoom</label>
           <input id="zoom-slider" type="range" min={Math.log(0.1)} max={Math.log(16)} step="any" value={Math.log(zoom)} onChange={event => setCenteredZoom(Math.exp(Number(event.target.value)))} />
@@ -464,7 +469,7 @@ function App() {
         }} />
         <div className="header-grid-control" role="group" aria-label={`${active ? layerModeLabel(active) : 'Brush'} grid type`}>
           <span>Grid</span>
-          {gridParameter?.type === 'select' ? gridParameter.options.map(option => <button key={option.value} type="button" aria-pressed={String((active!.settings as Record<string, unknown>)[gridParameter.id] ?? gridParameter.defaultValue) === option.value} onClick={() => setDocument(doc => updatePart(doc, layer => setLayerSetting(layer, gridParameter.id, option.value, doc.snapshot.canvas)))}>{option.label}</button>) : <button type="button" aria-pressed="true" disabled>Square</button>}
+          {gridParameter?.type === 'select' ? gridParameter.options.map(option => <button key={option.value} type="button" aria-pressed={String(parameterValue(gridParameter.id) ?? gridParameter.defaultValue) === option.value} title={option.label} aria-label={option.label} onClick={() => setDocument(doc => updatePart(doc, layer => setLayerSetting(layer, gridParameter.id, option.value, doc.snapshot.canvas)))}><GridIcon value={option.value} /><span>{option.label}</span></button>) : <button type="button" aria-pressed="true" disabled><GridIcon value="square" /><span>Square</span></button>}
         </div>
         <select className="file-menu" aria-label="File and history actions" value="" onChange={event => {
           switch (event.target.value) {
@@ -523,6 +528,7 @@ function App() {
             <div>Move: <button onClick={() => moveVector(-10, 0)}>←</button><button onClick={() => moveVector(10, 0)}>→</button><button onClick={() => moveVector(0, -10)}>↑</button><button onClick={() => moveVector(0, 10)}>↓</button></div>
             }
           </div>
+          {active.mode === 'metaball' && active.settings.engine === 'vector' && <p className="drawer-caption">VECTOR FIELD · Existing blobs remain in Field and Arc.</p>}
           <p className="drawer-caption">PARAMETERS</p>
           <div className="nct-parameters">{parameters.map((item, index) => <React.Fragment key={item.id}>{(index === 0 || parameterSection(item.id) !== parameterSection(parameters[index - 1].id)) && <div className="parameter-section">{parameterSection(item.id)}</div>}<div className="parameter-widget">
             <label htmlFor={`parameter-${item.id}`}>{item.label}</label>

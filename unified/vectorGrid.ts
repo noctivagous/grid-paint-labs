@@ -1,3 +1,4 @@
+import { sampleSpatialIndex } from './sampleSpatial';
 import { gridCellsInBounds, makeVectorField, vectorBrushOp, constrainVector, type NCTGraphiteDocumentCanvas, type NCTGraphiteGridCell, type VectorFieldLimits, type VectorSample } from '@nct/nctgraphite';
 
 export type VectorGridKind = 'square' | 'triangle' | 'hex';
@@ -13,19 +14,9 @@ export function makeGridVectors(kind: VectorGridKind, columns: number, rows: num
 
 /** Spatial buckets support interpolation and local brush neighborhoods on every lattice. */
 export function vectorLookup(vectors: readonly VectorSample[], spacing: number) {
-  const size = Math.max(1, spacing), buckets = new Map<string, VectorSample[]>();
-  const key = (x: number, y: number) => `${x},${y}`;
-  for (const v of vectors) {
-    const k = key(Math.floor(v.x / size), Math.floor(v.y / size)), bucket = buckets.get(k) ?? [];
-    bucket.push(v); buckets.set(k, bucket);
-  }
-  const nearest = (x: number, y: number, maxDistance = size * 2) => {
-    const bx = Math.floor(x / size), by = Math.floor(y / size), reach = Math.ceil(maxDistance / size), found: { sample: VectorSample; d: number }[] = [];
-    for (let j = -reach; j <= reach; j++) for (let i = -reach; i <= reach; i++) for (const sample of buckets.get(key(bx + i, by + j)) ?? []) {
-      const d = Math.hypot(x - sample.x, y - sample.y); if (d <= maxDistance) found.push({ sample, d });
-    }
-    return found.sort((a, b) => a.d - b.d);
-  };
+  const index = sampleSpatialIndex(vectors, spacing);
+  const nearest = (x: number, y: number, maxDistance = Math.max(1, spacing) * 2) => index.within(x, y, maxDistance)
+    .map(hit => ({ sample: vectors[hit.index], d: hit.d })).sort((a, b) => a.d - b.d);
   const interpolate = (x: number, y: number) => {
     const hits = nearest(x, y).slice(0, 4);
     if (!hits.length) return { vx: 0, vy: 0 };

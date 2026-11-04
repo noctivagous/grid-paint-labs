@@ -1,4 +1,5 @@
 import { makeGridVectors, stampGridVectors, vectorLookup, type VectorGridKind } from './vectorGrid';
+import { sampleSpatialIndex } from './sampleSpatial';
 import { adaptiveLattice, childCells, resolveAdaptiveEdges, type AdaptiveData, type AdaptiveCell } from './adaptiveCells';
 import {
   NCTGraphiteDocument,
@@ -91,7 +92,7 @@ export type MetaballSettings = {
   kFactor: number;
   handleSize: number;
   brushRadius: number;
-  engine: 'contour' | 'arc';
+  engine: 'contour' | 'arc' | 'vector';
   stampShape: 'circle' | 'roundrect';
   colorIndex: number;
   showGrid: boolean;
@@ -103,7 +104,7 @@ export type MetaballSettings = {
 
 export type MetaballLayer = NCTGraphiteLayerRecord & {
   mode: 'metaball';
-  data: { blobs: MetaballBlob[] };
+  data: { blobs: MetaballBlob[]; vectorField?: VectorFieldLayer };
   settings: MetaballSettings;
 };
 
@@ -304,6 +305,7 @@ export const METABALL_PARAMETERS: NCTParameterDefinition[] = [
   { id: 'engine', label: 'Engine', type: 'select', defaultValue: 'contour', options: [
     { value: 'contour', label: 'Field' },
     { value: 'arc', label: 'Arc' },
+    { value: 'vector', label: 'Vector' },
   ] },
   { id: 'stampShape', label: 'Stamp', type: 'select', defaultValue: 'circle', options: [
     { value: 'circle', label: 'Circle' },
@@ -467,6 +469,12 @@ export function createVectorFieldLayer(canvas: NCTGraphiteDocumentCanvas, partia
     settings,
     data: partial.data ?? { vectors: makeGridVectors(settings.gridKind, settings.columns, settings.rows, canvas), attractors: [] },
   };
+}
+
+/** The vector engine keeps its own editable field alongside the blob engines. */
+export function metaballVectorLayer(layer: MetaballLayer, canvas: NCTGraphiteDocumentCanvas): VectorFieldLayer {
+  const stored = layer.data.vectorField ?? createVectorFieldLayer(canvas, { settings: { shapeMode: 'magnitude', mode: 'swirl' } });
+  return { ...stored, id: `${layer.id}:vector`, visible: layer.visible, locked: layer.locked, opacity: layer.opacity, settings: { ...stored.settings, brushRadius: layer.settings.brushRadius, colorIndex: layer.settings.colorIndex } };
 }
 
 export function createDotShadingLayer(canvas: NCTGraphiteDocumentCanvas, partial: Partial<DotShadingLayer> = {}): DotShadingLayer {
@@ -675,7 +683,7 @@ function paintMetaballAt(layer: MetaballLayer, canvas: NCTGraphiteDocumentCanvas
   const radius = layer.settings.brushRadius;
   if (action === 'erase') {
     const blobs = layer.data.blobs.filter((blob) => Math.hypot(blob.x - point.x, blob.y - point.y) > radius + blob.r * 0.35);
-    return blobs.length === layer.data.blobs.length ? layer : { ...layer, data: { blobs } };
+    return blobs.length === layer.data.blobs.length ? layer : { ...layer, data: { ...layer.data, blobs } };
   }
   if (action === 'inflate') {
     let changed = false;
@@ -684,19 +692,19 @@ function paintMetaballAt(layer: MetaballLayer, canvas: NCTGraphiteDocumentCanvas
       changed = true;
       return { ...blob, r: Math.min(180, blob.r + 1.6) };
     });
-    return changed ? { ...layer, data: { blobs } } : layer;
+    return changed ? { ...layer, data: { ...layer.data, blobs } } : layer;
   }
   if (action === 'smooth') {
     const near = layer.data.blobs.filter(b => Math.hypot(b.x - point.x, b.y - point.y) < radius);
     if (!near.length) return layer;
     const center = { x: near.reduce((n, b) => n + b.x, 0) / near.length, y: near.reduce((n, b) => n + b.y, 0) / near.length };
-    return { ...layer, data: { blobs: layer.data.blobs.map(b => { if (!near.includes(b)) return b; const grid = snapPoint(b); return { ...b, x: b.x * 0.92 + center.x * 0.04 + grid.x * 0.04, y: b.y * 0.92 + center.y * 0.04 + grid.y * 0.04, r: b.r * 0.995 + 0.2 }; }) } };
+    return { ...layer, data: { ...layer.data, blobs: layer.data.blobs.map(b => { if (!near.includes(b)) return b; const grid = snapPoint(b); return { ...b, x: b.x * 0.92 + center.x * 0.04 + grid.x * 0.04, y: b.y * 0.92 + center.y * 0.04 + grid.y * 0.04, r: b.r * 0.995 + 0.2 }; }) } };
   }
   if (action === 'bridge') {
     const nearest = layer.data.blobs.filter(b => b.type !== 'negative' && b.colorGroup === layer.settings.colorIndex).sort((a, b) => Math.hypot(a.x - point.x, a.y - point.y) - Math.hypot(b.x - point.x, b.y - point.y)).slice(0, 2);
     if (nearest.length < 2) return layer;
     const [a, b] = nearest;
-    return { ...layer, data: { blobs: [...layer.data.blobs, { id: createNCTGraphiteLayerId(), x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, r: Math.min(a.r, b.r) * 0.55, type: 'positive', colorGroup: a.colorGroup, color: a.color }] } };
+    return { ...layer, data: { ...layer.data, blobs: [...layer.data.blobs, { id: createNCTGraphiteLayerId(), x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, r: Math.min(a.r, b.r) * 0.55, type: 'positive', colorGroup: a.colorGroup, color: a.color }] } };
   }
   if (action !== 'paint' && action !== 'placeNeg') return layer;
   if (layer.settings.snap) point = snapPoint(point);
@@ -711,7 +719,7 @@ function paintMetaballAt(layer: MetaballLayer, canvas: NCTGraphiteDocumentCanvas
     colorGroup: layer.settings.colorIndex,
     color,
   }));
-  return { ...layer, data: { blobs: [...layer.data.blobs, ...added] } };
+  return { ...layer, data: { ...layer.data, blobs: [...layer.data.blobs, ...added] } };
 }
 
 function vectorLimitsOf(settings: VectorFieldSettings): VectorFieldLimits {
@@ -767,6 +775,8 @@ function paintVectorAt(
   return { ...layer, data: { ...layer.data, vectors } };
 }
 
+const dotSampleIndices = new WeakMap<readonly SampleGainPoint[], ReturnType<typeof sampleSpatialIndex<SampleGainPoint>>>();
+
 function paintDotAt(
   layer: DotShadingLayer,
   canvas: NCTGraphiteDocumentCanvas,
@@ -775,28 +785,32 @@ function paintDotAt(
   extra?: { brushAngle?: number },
 ): DotShadingLayer {
   const stampAction = action === 'erase' ? 'shrink' : action === 'smooth' ? 'smooth' : action === 'clear' ? 'clear' : 'grow';
+  const original = layer.data.points;
+  let index = dotSampleIndices.get(original);
+  if (!index) {
+    index = sampleSpatialIndex(original, canvas.width / Math.max(1, layer.settings.columns));
+    dotSampleIndices.set(original, index);
+  }
+  const radius = layer.settings.brushRadius;
+  const hits = index.within(point.x, point.y, radius);
+  if (!hits.some(hit => hit.d < radius)) return layer;
+  const neighbor = canvas.width / Math.max(1, layer.settings.columns) * 1.8;
+  const candidates = (stampAction === 'smooth' ? index.within(point.x, point.y, radius + neighbor) : hits)
+    .map(hit => hit.index).sort((a, b) => a - b);
+  const stamped = stampSampleGain(candidates.map(i => original[i]), {
+    columns: layer.settings.columns, rows: layer.settings.rows, width: canvas.width, height: canvas.height,
+    x: point.x, y: point.y, radius: layer.settings.brushRadius, action: stampAction,
+    intensity: layer.settings.intensity, falloffType: layer.settings.falloffType, falloffPower: layer.settings.falloffPower,
+    minRadius: layer.settings.minRadius, maxRadius: layer.settings.maxRadius, rotationMode: layer.settings.rotationMode,
+    rotationJitter: layer.settings.rotationJitter, brushAngle: extra?.brushAngle,
+  });
+  if (stamped.every((sample, i) => sample.radius === original[candidates[i]].radius && sample.rotation === original[candidates[i]].rotation)) return layer;
+  const points = original.slice();
+  for (let i = 0; i < candidates.length; i++) points[candidates[i]] = stamped[i];
+  dotSampleIndices.set(points, index);
   return {
     ...layer,
-    data: {
-      points: stampSampleGain(layer.data.points, {
-        columns: layer.settings.columns,
-        rows: layer.settings.rows,
-        width: canvas.width,
-        height: canvas.height,
-        x: point.x,
-        y: point.y,
-        radius: layer.settings.brushRadius,
-        action: stampAction,
-        intensity: layer.settings.intensity,
-        falloffType: layer.settings.falloffType,
-        falloffPower: layer.settings.falloffPower,
-        minRadius: layer.settings.minRadius,
-        maxRadius: layer.settings.maxRadius,
-        rotationMode: layer.settings.rotationMode,
-        rotationJitter: layer.settings.rotationJitter,
-        brushAngle: extra?.brushAngle,
-      }),
-    },
+    data: { points },
   };
 }
 
@@ -808,7 +822,12 @@ export function paintLayerAt(
   extra?: { velocityX?: number; velocityY?: number; brushAngle?: number },
 ): GridPaintLayer {
   if (layer.locked || !layer.visible) return layer;
-  if (layer.mode === 'metaball') return paintMetaballAt(layer, canvas, point, action);
+  if (layer.mode === 'metaball') {
+    if (layer.settings.engine !== 'vector') return paintMetaballAt(layer, canvas, point, action);
+    const vector = metaballVectorLayer(layer, canvas);
+    const next = paintVectorAt(vector, point, action, extra, canvas);
+    return next === vector ? layer : { ...layer, data: { ...layer.data, vectorField: next } };
+  }
   if (layer.mode === 'vector-field') return paintVectorAt(layer, point, action, extra, canvas);
   if (layer.mode === 'dot-shading') {
     if (action === 'inflate' || action === 'placeNeg' || action === 'attractor' || action === 'toggle') return layer;
@@ -821,8 +840,12 @@ export function paintLayerAt(
 
 export function clearLayerPaint(layer: GridPaintLayer): GridPaintLayer {
   if (layer.mode === 'metaball') {
+    if (layer.settings.engine === 'vector' && layer.data.vectorField) {
+      const vectorField = clearLayerPaint(layer.data.vectorField) as VectorFieldLayer;
+      return vectorField === layer.data.vectorField ? layer : { ...layer, data: { ...layer.data, vectorField } };
+    }
     if (layer.data.blobs.length === 0) return layer;
-    return { ...layer, data: { blobs: [] } };
+    return { ...layer, data: { ...layer.data, blobs: [] } };
   }
   if (layer.mode === 'vector-field') {
     const empty = layer.data.vectors.every((sample) => sample.vx === 0 && sample.vy === 0) && layer.data.attractors.length === 0;
@@ -873,9 +896,17 @@ export function setLayerSetting(
   value: number | boolean | string,
   canvas?: NCTGraphiteDocumentCanvas,
 ): GridPaintLayer {
+  if (layer.mode === 'metaball' && id.startsWith('vector:') && canvas) {
+    const vector = metaballVectorLayer(layer, canvas);
+    const next = setLayerSetting(vector, id.slice(7), value, canvas) as VectorFieldLayer;
+    return next === vector ? layer : { ...layer, data: { ...layer.data, vectorField: next } };
+  }
   if (!(id in layer.settings) && !(layer.mode === 'vector-field' && (id.startsWith('shape') || id === 'gridKind' || id === 'showGrid')) && !(layer.mode === 'cell-paint' && id === 'hullMode') && !(layer.mode === 'metaball' && ['snap', 'rectAspect', 'cornerT'].includes(id)) && !((layer.mode === 'cell-paint' || layer.mode === 'hull') && ['subdivideDepth', 'subdivideTarget', 'subdivideFalloff'].includes(id))) return layer;
   if ( (layer.settings as Record<string, unknown>)[id] === value) return layer;
   const settings = { ...layer.settings, [id]: value };
+  if (layer.mode === 'metaball' && id === 'engine' && value === 'vector' && canvas && !layer.data.vectorField) {
+    return { ...layer, settings: settings as MetaballSettings, data: { ...layer.data, vectorField: metaballVectorLayer(layer, canvas) } };
+  }
   if (layer.mode === 'vector-field' && id === 'gridKind' && canvas) {
     const next = { ...layer, settings } as VectorFieldLayer;
     const spacing = Math.min(canvas.width / layer.settings.columns, canvas.height / layer.settings.rows);
@@ -978,7 +1009,7 @@ export function metaballNecks(layer: MetaballLayer) {
 }
 
 export function paintedCount(layer: GridPaintLayer): number {
-  if (layer.mode === 'metaball') return layer.data.blobs.length;
+  if (layer.mode === 'metaball') return layer.settings.engine === 'vector' ? (layer.data.vectorField?.data.vectors.filter(v => Math.hypot(v.vx, v.vy) >= 0.01).length ?? 0) : layer.data.blobs.length;
   if (layer.mode === 'vector-field') {
     return layer.data.vectors.filter((sample) => Math.hypot(sample.vx, sample.vy) >= 0.01).length;
   }
@@ -988,7 +1019,7 @@ export function paintedCount(layer: GridPaintLayer): number {
 
 export function layerCommands(layer: GridPaintLayer) {
   if (layer.mode === 'hull') return HULL_COMMANDS;
-  if (layer.mode === 'metaball') return METABALL_COMMANDS;
+  if (layer.mode === 'metaball') return layer.settings.engine === 'vector' ? VECTOR_COMMANDS : METABALL_COMMANDS;
   if (layer.mode === 'vector-field') return VECTOR_COMMANDS;
   if (layer.mode === 'dot-shading') return DOT_COMMANDS;
   return CELL_PAINT_COMMANDS;
@@ -996,7 +1027,7 @@ export function layerCommands(layer: GridPaintLayer) {
 
 export function layerParameters(layer: GridPaintLayer) {
   if (layer.mode === 'hull') return HULL_PARAMETERS;
-  if (layer.mode === 'metaball') return METABALL_PARAMETERS;
+  if (layer.mode === 'metaball') return layer.settings.engine === 'vector' ? [METABALL_PARAMETERS[0], METABALL_PARAMETERS.find(p => p.id === 'brushRadius')!, ...VECTOR_PARAMETERS.filter(p => p.id !== 'brushRadius').map(p => ({ ...p, id: `vector:${p.id}` }))] : METABALL_PARAMETERS;
   if (layer.mode === 'vector-field') return VECTOR_PARAMETERS;
   if (layer.mode === 'dot-shading') return DOT_PARAMETERS;
   return CELL_PAINT_PARAMETERS;

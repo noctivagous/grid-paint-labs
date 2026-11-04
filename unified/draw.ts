@@ -3,7 +3,7 @@ import { vectorShapePath } from './vectorShapes';
 import { vectorGridCells } from './vectorGrid';
 import { vectorStyle, satoNeck, type NCTGraphitePoint } from '@nct/nctgraphite';
 import type { DotShadingLayer, GridPaintDocument, GridPaintLayer, MetaballLayer, VectorFieldLayer } from './layers';
-import { hullOutlines, layerContents, layerLattice, metaballContours, metaballNecks, PALETTE, type BrushMode } from './layers';
+import { hullOutlines, metaballVectorLayer, layerContents, layerLattice, metaballContours, metaballNecks, PALETTE, type BrushMode } from './layers';
 
 function toColor(scope: paper.PaperScope, value: string, alpha = 1): paper.Color {
   const color = new scope.Color(value);
@@ -93,7 +93,7 @@ function drawCellLayer(scope: paper.PaperScope, layer: Extract<GridPaintLayer, {
       if (cache.size >= 12 && !cache.has(layer.id)) cache.delete(cache.keys().next().value!);
       cache.set(layer.id, entry);
     }
-    new scope.Raster({ source: entry.image, position: new scope.Point(canvas.width / 2, canvas.height / 2) });
+    new scope.Raster({ image: entry.image, position: new scope.Point(canvas.width / 2, canvas.height / 2) });
   }
   for (const cell of lattice) {
     const painted = layer.data.cells[cell.id];
@@ -291,7 +291,62 @@ function drawDotShape(scope: paper.PaperScope, shape: DotShadingLayer['settings'
   return path;
 }
 
-function drawDotLayer(scope: paper.PaperScope, layer: DotShadingLayer, canvas: GridPaintDocument['snapshot']['canvas'], opacity: number) {
+const dotImages = new WeakMap<paper.PaperScope, Map<string, { key: string; image: HTMLCanvasElement; points: DotShadingLayer['data']['points'] }>>();
+
+function drawDotRaster(scope: paper.PaperScope, layer: DotShadingLayer, canvas: GridPaintDocument['snapshot']['canvas'], opacity: number) {
+  let cache = dotImages.get(scope);
+  if (!cache) { cache = new Map(); dotImages.set(scope, cache); }
+  const key = JSON.stringify([canvas.width, canvas.height, layer.settings.shapeType, layer.settings.colorMode, layer.settings.fillMode, layer.settings.rotationMode, layer.settings.colorIndex, layer.settings.maxRadius, opacity]);
+  let entry = cache.get(layer.id);
+  const full = !entry || entry.key !== key || entry.points.length !== layer.data.points.length;
+  if (!entry || entry.image.width !== canvas.width || entry.image.height !== canvas.height) {
+    const image = window.document.createElement('canvas');
+    image.width = canvas.width; image.height = canvas.height;
+    entry = { key, image, points: [] };
+    if (cache.size >= 12 && !cache.has(layer.id)) cache.delete(cache.keys().next().value!);
+    cache.set(layer.id, entry);
+  }
+  const ctx = entry.image.getContext('2d')!;
+  let left = full ? 0 : canvas.width, top = full ? 0 : canvas.height, right = full ? canvas.width : 0, bottom = full ? canvas.height : 0;
+  if (!full) for (let i = 0; i < layer.data.points.length; i++) {
+    const a = entry.points[i], b = layer.data.points[i];
+    if (a.x === b.x && a.y === b.y && a.radius === b.radius && a.rotation === b.rotation && a.col === b.col && a.row === b.row) continue;
+    for (const point of [a, b]) {
+      const margin = Math.max(3, point.radius * 3 + 2);
+      left = Math.min(left, point.x - margin); top = Math.min(top, point.y - margin);
+      right = Math.max(right, point.x + margin); bottom = Math.max(bottom, point.y + margin);
+    }
+  }
+  if (right > left && bottom > top) {
+    left = Math.max(0, Math.floor(left)); top = Math.max(0, Math.floor(top));
+    right = Math.min(canvas.width, Math.ceil(right)); bottom = Math.min(canvas.height, Math.ceil(bottom));
+    ctx.clearRect(left, top, right - left, bottom - top);
+    ctx.save(); ctx.beginPath(); ctx.rect(left, top, right - left, bottom - top); ctx.clip();
+    for (const point of layer.data.points) {
+      const radius = Math.max(0.15, point.radius), margin = radius * 3 + 2;
+      if (point.x + margin < left || point.x - margin > right || point.y + margin < top || point.y - margin > bottom) continue;
+      ctx.save(); ctx.translate(point.x, point.y);
+      if (layer.settings.rotationMode !== 'None') ctx.rotate(point.rotation);
+      ctx.globalAlpha = (layer.settings.colorMode === 'Group' ? 1 : 0.18 + Math.min(1, point.radius / Math.max(0.001, layer.settings.maxRadius)) * 0.82) * opacity;
+      ctx.fillStyle = ctx.strokeStyle = dotFill(layer, point.radius, point.col, point.row);
+      ctx.lineCap = 'round'; ctx.beginPath();
+      const shape = layer.settings.shapeType;
+      if (shape === 'Circle') ctx.arc(0, 0, radius, 0, Math.PI * 2);
+      else if (shape === 'Square') { const s = radius * 1.1; ctx.rect(-s, -s, s * 2, s * 2); }
+      else if (shape === 'Diamond') { const s = radius * 1.15; ctx.moveTo(0, -s); ctx.lineTo(s, 0); ctx.lineTo(0, s); ctx.lineTo(-s, 0); ctx.closePath(); }
+      else if (shape === 'Triangle') { const s = radius * 1.35; ctx.moveTo(0, -s); ctx.lineTo(s * 0.866, s * 0.5); ctx.lineTo(-s * 0.866, s * 0.5); ctx.closePath(); }
+      else if (shape === 'Line') { ctx.moveTo(-radius * 1.6, 0); ctx.lineTo(radius * 1.6, 0); ctx.lineWidth = Math.max(1, radius * 0.42); }
+      else { const len = radius * 1.3; ctx.lineWidth = Math.max(0.8, radius * 0.34); if (shape === 'Plus') { ctx.moveTo(-len, 0); ctx.lineTo(len, 0); ctx.moveTo(0, -len); ctx.lineTo(0, len); } else { ctx.moveTo(-len, -len); ctx.lineTo(len, len); ctx.moveTo(-len, len); ctx.lineTo(len, -len); } }
+      if (shape === 'Line' || shape === 'Cross' || shape === 'Plus' || layer.settings.fillMode === 'Stroke') { if (!['Line', 'Cross', 'Plus'].includes(shape)) ctx.lineWidth = Math.max(0.8, radius * 0.35); ctx.stroke(); } else ctx.fill();
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+  entry.key = key; entry.points = layer.data.points;
+  new scope.Raster({ image: entry.image, position: new scope.Point(canvas.width / 2, canvas.height / 2) });
+}
+
+function drawDotLayer(scope: paper.PaperScope, layer: DotShadingLayer, canvas: GridPaintDocument['snapshot']['canvas'], opacity: number, artworkOnly: boolean) {
   if (layer.settings.showGrid && layer.data.points.length) {
     const spacing = canvas.width / Math.max(1, layer.settings.columns);
     const offsetX = (canvas.width - (layer.settings.columns - 1) * spacing) / 2;
@@ -313,6 +368,7 @@ function drawDotLayer(scope: paper.PaperScope, layer: DotShadingLayer, canvas: G
       line.strokeWidth = 1;
     }
   }
+  if (!artworkOnly) { drawDotRaster(scope, layer, canvas, opacity); return; }
   for (const point of layer.data.points) {
     const radius = Math.max(0.15, point.radius);
     const fill = dotFill(layer, point.radius, point.col, point.row);
@@ -343,6 +399,12 @@ function drawLayer(
   const dim = inactive ? 0.45 : 1;
   const opacity = (layer.opacity ?? 1) * dim;
   if (layer.mode === 'metaball') {
+    if (layer.settings.engine === 'vector') {
+      const vector = metaballVectorLayer(layer, canvas);
+      const rendered = artworkOnly ? { ...vector, settings: { ...vector.settings, showVectors: vector.settings.shapeMode === 'off' ? vector.settings.showVectors : false }, data: { ...vector.data, attractors: [] } } : vector;
+      drawVectorLayer(scope, rendered, canvas, opacity, inactive ? null : brush, painting, artworkOnly);
+      return;
+    }
     drawMetaballLayer(scope, layer, canvas, opacity);
     return;
   }
@@ -351,7 +413,7 @@ function drawLayer(
     return;
   }
   if (layer.mode === 'dot-shading') {
-    drawDotLayer(scope, layer, canvas, opacity);
+    drawDotLayer(scope, layer, canvas, opacity, artworkOnly);
     return;
   }
   drawCellLayer(scope, layer, canvas, opacity);
