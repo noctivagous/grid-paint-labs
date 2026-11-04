@@ -89,7 +89,7 @@ test('NCTGraphiteAppShell collapses chrome and pads missing sections', async () 
   const out = render();
   assert.ok(!out.bare.includes('<header') && !out.bare.includes('<footer'), 'omitted chrome collapses');
   assert.ok(out.bare.includes('data-sec="ONLY"'));
-  assert.equal(out.bare.split('<section').length - 1, 2, 'two empty containers pad to the default three');
+  assert.equal(out.bare.split('<section').length - 1, 3, 'one child plus empty containers pad to the default three');
 });
 
 test('NCTGraphiteAppShell clamps extras and honors column proportions', async () => {
@@ -105,4 +105,11 @@ test('NCTGraphiteAppShell applies widths and nests subdivisions', async () => {
   const out = render();
   assert.ok(out.weights.includes('min-width:320px') && out.weights.includes('max-width:1400px'));
   assert.ok(out.nested.includes('data-sec="TOP"') && out.nested.includes('data-sec="L"') && out.nested.includes('data-sec="R"'));
+});
+
+test('NCTGraphiteAppShell stretches body and section children to fill leftover height', async () => {
+  const { render } = await loadProbe();
+  const out = render();
+  assert.ok(out.base.includes('flex:1 1 0%'), 'body and grid consume leftover viewport');
+  assert.ok(out.base.includes('min-height:0;height:100%;display:grid'), 'each section is a stretched grid cell');
 });
