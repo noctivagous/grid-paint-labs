@@ -7,7 +7,7 @@ const result = await build({ stdin: { contents: `export { createMetaballLayer, c
 const api = await import(`data:text/javascript;base64,${Buffer.from(result.outputFiles[0].contents).toString('base64')}`);
 const canvas = api.defaultCanvas(), point = { x: canvas.width / 2, y: canvas.height / 2 };
 test('metaball vector engine paints and contours without losing the blobs', () => {
-  let layer = api.createMetaballLayer();
+  let layer = api.createMetaballLayer({ settings: { engine: 'contour' } });
   layer = api.paintLayerAt(layer, canvas, point, 'paint');
   const blobs = layer.data.blobs;
   layer = api.setLayerSetting(layer, 'engine', 'vector', canvas);
@@ -41,4 +41,13 @@ test('vector settings, grid and data persist across document save and undo', () 
   assert.equal(saved.data.vectorField.settings.shapeMode, 'strokes');
   assert.deepEqual(saved.data.vectorField.data.vectors, original.data.vectorField.data.vectors);
   assert.ok(doc.undo().layers.find(l => l.id === id).data.vectorField.data.vectors.every(v => v.vx === 0 && v.vy === 0));
+});
+
+test('new metaball layers default to vector while explicit engines remain unchanged', () => {
+  const layer = api.createMetaballLayer();
+  assert.equal(layer.settings.engine, 'vector');
+  assert.ok(api.layerParameters(layer).find(p => p.id === 'engine').defaultValue === 'vector');
+  const painted = api.paintLayerAt(layer, canvas, point, 'paint');
+  assert.ok(painted.data.vectorField.data.vectors.some(v => Math.hypot(v.vx, v.vy) > 0));
+  for (const engine of ['arc', 'contour']) assert.equal(api.createMetaballLayer({ settings: { engine } }).settings.engine, engine);
 });

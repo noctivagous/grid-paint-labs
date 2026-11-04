@@ -4,6 +4,7 @@ import { adaptiveLattice, childCells, resolveAdaptiveEdges, type AdaptiveData, t
 import {
   NCTGraphiteDocument,
   contourLayersForBlobs,
+  gooToThreshold,
   createNCTGraphiteLayerId,
   gridCellsInBounds,
   hullLoopsFromPolygons,
@@ -97,6 +98,7 @@ export type MetaballSettings = {
   colorIndex: number;
   showGrid: boolean;
   smoothBezier: boolean;
+  influenceRange?: number;
   snap?: boolean;
   rectAspect?: number;
   cornerT?: number;
@@ -302,7 +304,7 @@ export const HULL_PARAMETERS: NCTParameterDefinition[] = [
 ];
 
 export const METABALL_PARAMETERS: NCTParameterDefinition[] = [
-  { id: 'engine', label: 'Engine', type: 'select', defaultValue: 'contour', options: [
+  { id: 'engine', label: 'Engine', type: 'select', defaultValue: 'vector', options: [
     { value: 'contour', label: 'Field' },
     { value: 'arc', label: 'Arc' },
     { value: 'vector', label: 'Vector' },
@@ -314,7 +316,8 @@ export const METABALL_PARAMETERS: NCTParameterDefinition[] = [
   { id: 'snap', label: 'Snap to grid', type: 'boolean', defaultValue: false },
   { id: 'rectAspect', label: 'Stamp aspect', type: 'number', min: 1, max: 3, step: 0.05, defaultValue: 1.7 },
   { id: 'cornerT', label: 'Stamp corner', type: 'number', min: 0.25, max: 1, step: 0.05, defaultValue: 0.55 },
-  { id: 'gridResolution', label: 'Field grid', type: 'number', min: 16, max: 96, step: 4, defaultValue: 48 },
+  { id: 'gridResolution', label: 'Field grid (minimum)', type: 'number', min: 16, max: 512, step: 4, defaultValue: 48 },
+  { id: 'influenceRange', label: 'Range × radius (0 = unlimited)', type: 'number', min: 0, max: 20, step: 0.5, defaultValue: 0 },
   { id: 'goo', label: 'Goo', type: 'number', min: 0.2, max: 1.2, step: 0.05, defaultValue: 0.8 },
   { id: 'kFactor', label: 'Bridge K', type: 'number', min: 1, max: 4, step: 0.1, defaultValue: 2.5 },
   { id: 'handleSize', label: 'Handles', type: 'number', min: 0.5, max: 4, step: 0.1, defaultValue: 2.4 },
@@ -438,7 +441,7 @@ export function createMetaballLayer(partial: Partial<MetaballLayer> = {}): Metab
     data: { blobs: [] },
     settings: {
       gridResolution: 48, goo: 0.8, kFactor: 2.5, handleSize: 2.4, brushRadius: 48,
-      engine: 'contour', stampShape: 'circle', colorIndex: 0, showGrid: false, smoothBezier: false,
+      engine: 'vector', stampShape: 'circle', colorIndex: 0, showGrid: false, smoothBezier: false,
       ...partial.settings,
     },
     ...partial,
@@ -446,7 +449,7 @@ export function createMetaballLayer(partial: Partial<MetaballLayer> = {}): Metab
     data: partial.data ?? { blobs: [] },
     settings: {
       gridResolution: 48, goo: 0.8, kFactor: 2.5, handleSize: 2.4, brushRadius: 48,
-      engine: 'contour', stampShape: 'circle', colorIndex: 0, showGrid: false, smoothBezier: false,
+      engine: 'vector', stampShape: 'circle', colorIndex: 0, showGrid: false, smoothBezier: false,
       ...partial.settings,
     },
   };
@@ -671,7 +674,7 @@ function editAdaptiveCells(layer: CellMeshLayer, canvas: NCTGraphiteDocumentCanv
 }
 
 function metaballStampCenters(layer: MetaballLayer, point: NCTGraphitePoint): { x: number; y: number; r: number }[] {
-  const radius = Math.max(10, layer.settings.brushRadius * 0.42);
+  const radius = layer.settings.brushRadius;
   if (layer.settings.stampShape === 'roundrect') return roundRectStamp(point.x, point.y, radius, layer.settings.rectAspect ?? 1.7, layer.settings.cornerT ?? 0.55).centers;
   return [{ x: point.x, y: point.y, r: radius }];
 }
@@ -715,6 +718,7 @@ function paintMetaballAt(layer: MetaballLayer, canvas: NCTGraphiteDocumentCanvas
     x: center.x,
     y: center.y,
     r: center.r,
+    ...(layer.settings.engine === 'contour' ? { fieldScale: Math.sqrt(gooToThreshold(layer.settings.goo)) } : {}),
     type,
     colorGroup: layer.settings.colorIndex,
     color,
@@ -901,7 +905,7 @@ export function setLayerSetting(
     const next = setLayerSetting(vector, id.slice(7), value, canvas) as VectorFieldLayer;
     return next === vector ? layer : { ...layer, data: { ...layer.data, vectorField: next } };
   }
-  if (!(id in layer.settings) && !(layer.mode === 'vector-field' && (id.startsWith('shape') || id === 'gridKind' || id === 'showGrid')) && !(layer.mode === 'cell-paint' && id === 'hullMode') && !(layer.mode === 'metaball' && ['snap', 'rectAspect', 'cornerT'].includes(id)) && !((layer.mode === 'cell-paint' || layer.mode === 'hull') && ['subdivideDepth', 'subdivideTarget', 'subdivideFalloff'].includes(id))) return layer;
+  if (!(id in layer.settings) && !(layer.mode === 'vector-field' && (id.startsWith('shape') || id === 'gridKind' || id === 'showGrid')) && !(layer.mode === 'cell-paint' && id === 'hullMode') && !(layer.mode === 'metaball' && ['snap', 'rectAspect', 'cornerT', 'influenceRange'].includes(id)) && !((layer.mode === 'cell-paint' || layer.mode === 'hull') && ['subdivideDepth', 'subdivideTarget', 'subdivideFalloff'].includes(id))) return layer;
   if ( (layer.settings as Record<string, unknown>)[id] === value) return layer;
   const settings = { ...layer.settings, [id]: value };
   if (layer.mode === 'metaball' && id === 'engine' && value === 'vector' && canvas && !layer.data.vectorField) {
@@ -981,16 +985,20 @@ export function hullOutline(layer: HullLayer, canvas: NCTGraphiteDocumentCanvas)
 }
 
 export function metaballContours(layer: MetaballLayer, canvas: NCTGraphiteDocumentCanvas) {
-  const rows = Math.max(8, Math.round(layer.settings.gridResolution * (canvas.height / canvas.width)));
+  // At least four samples per smallest radius, bounded to keep live drawing responsive.
+  const smallest = layer.data.blobs.reduce((min, blob) => Number.isFinite(blob.r) && blob.r > 0 ? Math.min(min, blob.r) : min, Infinity);
+  const cols = Math.max(layer.settings.gridResolution, Math.min(512, Math.ceil(canvas.width * 4 / smallest)));
+  const rows = Math.max(8, Math.round(cols * (canvas.height / canvas.width)));
   return contourLayersForBlobs(
     layer.data.blobs,
     PALETTE,
-    layer.settings.gridResolution,
+    cols,
     rows,
     canvas.width,
     canvas.height,
     layer.settings.goo,
     layer.settings.smoothBezier,
+    layer.settings.influenceRange ?? 0,
   );
 }
 
@@ -1027,7 +1035,7 @@ export function layerCommands(layer: GridPaintLayer) {
 
 export function layerParameters(layer: GridPaintLayer) {
   if (layer.mode === 'hull') return HULL_PARAMETERS;
-  if (layer.mode === 'metaball') return layer.settings.engine === 'vector' ? [METABALL_PARAMETERS[0], METABALL_PARAMETERS.find(p => p.id === 'brushRadius')!, ...VECTOR_PARAMETERS.filter(p => p.id !== 'brushRadius').map(p => ({ ...p, id: `vector:${p.id}` }))] : METABALL_PARAMETERS;
+  if (layer.mode === 'metaball') return layer.settings.engine === 'vector' ? [METABALL_PARAMETERS[0], METABALL_PARAMETERS.find(p => p.id === 'brushRadius')!, ...VECTOR_PARAMETERS.filter(p => p.id !== 'brushRadius').map(p => ({ ...p, id: `vector:${p.id}` }))] : layer.settings.engine === 'contour' ? METABALL_PARAMETERS : METABALL_PARAMETERS.filter(p => p.id !== 'influenceRange');
   if (layer.mode === 'vector-field') return VECTOR_PARAMETERS;
   if (layer.mode === 'dot-shading') return DOT_PARAMETERS;
   return CELL_PAINT_PARAMETERS;

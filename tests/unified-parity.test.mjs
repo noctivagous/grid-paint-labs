@@ -16,7 +16,7 @@ test('momentary vector operation paints without changing selected mode', () => {
 });
 test('metaball snap, bridge and smoothing preserve blob data', () => {
   const canvas = defaultCanvas();
-  let layer = setLayerSetting(createMetaballLayer(), 'snap', true, canvas);
+  let layer = setLayerSetting(createMetaballLayer({ settings: { engine: 'contour' } }), 'snap', true, canvas);
   layer = paintLayerAt(layer, canvas, { x: 201, y: 200 }, 'paint');
   assert.equal(layer.data.blobs[0].x % (canvas.width / layer.settings.gridResolution), 0);
   layer = paintLayerAt(layer, canvas, { x: 250, y: 200 }, 'paint');
@@ -25,4 +25,17 @@ test('metaball snap, bridge and smoothing preserve blob data', () => {
   const smooth = paintLayerAt(layer, canvas, { x: 225, y: 200 }, 'smooth');
   assert.equal(smooth.data.blobs.length, 3);
   assert.notEqual(smooth.data.blobs[0].x, layer.data.blobs[0].x);
+});
+
+ test('Arc circular stamps match the brush radius and cursor position', () => {
+  const canvas = defaultCanvas();
+  for (const radius of [16, 48, 120]) {
+    const layer = createMetaballLayer({ settings: { engine: 'arc', brushRadius: radius, stampShape: 'circle' } });
+    for (const action of ['paint', 'placeNeg']) {
+      const next = paintLayerAt(layer, canvas, { x: 201, y: 209 }, action);
+      assert.equal(next.data.blobs[0].r, radius);
+      assert.equal(next.data.blobs[0].x, 201);
+      assert.equal(next.data.blobs[0].y, 209);
+    }
+  }
 });

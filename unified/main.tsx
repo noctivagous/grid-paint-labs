@@ -462,6 +462,9 @@ function App() {
           <NumberField label="Zoom percentage" value={Math.round(zoom * 100)} min={10} max={1600} step={1} onCommit={value => setCenteredZoom(value / 100)} />
           <span aria-hidden="true">%</span>
         </div>
+        <div className="engine-description" aria-live="polite">
+          {!active ? <>Select a layer to start painting.</> : active.mode === 'metaball' ? (active.settings.engine === 'vector' ? <><strong>Vector field</strong> · Paint vectors to shape a contour. Blobs remain in Field and Arc.</> : active.settings.engine === 'arc' ? <><strong>Arc</strong> · Connect circular stamps with curved bridges. Shares blobs with Field.</> : <><strong>Field</strong> · Blend stamps into a sampled contour. Shares blobs with Arc.</>) : active.mode === 'vector-field' ? <><strong>Vectors</strong> · Paint and reshape a flow field; turn it into filled contours.</> : active.mode === 'dot-shading' ? <><strong>Dots</strong> · Paint dot size and density to create shading patterns.</> : <><strong>Cells</strong> · Paint grid cells, subdivide them, and outline them with a hull.</>}
+        </div>
         <input ref={fileInput} type="file" accept=".json,.nctgdoc.json,application/json" hidden aria-label="Open document" onChange={(event) => {
           const file = event.currentTarget.files?.[0];
           event.currentTarget.value = '';
@@ -528,7 +531,6 @@ function App() {
             <div>Move: <button onClick={() => moveVector(-10, 0)}>←</button><button onClick={() => moveVector(10, 0)}>→</button><button onClick={() => moveVector(0, -10)}>↑</button><button onClick={() => moveVector(0, 10)}>↓</button></div>
             }
           </div>
-          {active.mode === 'metaball' && active.settings.engine === 'vector' && <p className="drawer-caption">VECTOR FIELD · Existing blobs remain in Field and Arc.</p>}
           <p className="drawer-caption">PARAMETERS</p>
           <div className="nct-parameters">{parameters.map((item, index) => <React.Fragment key={item.id}>{(index === 0 || parameterSection(item.id) !== parameterSection(parameters[index - 1].id)) && <div className="parameter-section">{parameterSection(item.id)}</div>}<div className="parameter-widget">
             <label htmlFor={`parameter-${item.id}`}>{item.label}</label>

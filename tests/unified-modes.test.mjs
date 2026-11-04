@@ -16,11 +16,11 @@ test('one layer retains independent mode marks through undo, redo and save', () 
   const cells = Object.keys(modeLayer(doc.activeLayer, 'cell-paint', canvas).data.cells).length;
   assert.ok(cells > 0);
   paint('metaball', 'paint');
-  assert.ok(modeLayer(doc.activeLayer, 'metaball', canvas).data.blobs.length > 0);
+  assert.ok(modeLayer(doc.activeLayer, 'metaball', canvas).data.vectorField.data.vectors.some(v => Math.hypot(v.vx, v.vy) > 0));
   assert.equal(Object.keys(modeLayer(doc.activeLayer, 'cell-paint', canvas).data.cells).length, cells);
   assert.equal(layerContents(doc.activeLayer).length, 2);
   const saved = NCTGraphiteDocument.parse(doc.toJSON());
-  assert.equal(modeLayer(saved.activeLayer, 'metaball', canvas).data.blobs.length, modeLayer(doc.activeLayer, 'metaball', canvas).data.blobs.length);
+  assert.deepEqual(modeLayer(saved.activeLayer, 'metaball', canvas).data.vectorField.data.vectors, modeLayer(doc.activeLayer, 'metaball', canvas).data.vectorField.data.vectors);
   assert.equal(layerContents(doc.undo().activeLayer).length, 1);
   assert.equal(layerContents(doc.undo().redo().activeLayer).length, 2);
 });
