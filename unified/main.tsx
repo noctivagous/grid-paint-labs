@@ -23,7 +23,6 @@ import {
   createDotShadingLayer,
   cycleLayerColor,
   DOT_COMMANDS,
-  HULL_COMMANDS,
   METABALL_COMMANDS,
   PALETTE,
   VECTOR_COMMANDS,
@@ -129,13 +128,6 @@ function App() {
     onAction: (id, event) => handleCommand(id, event),
     onKeyUp: () => commitStroke(),
   });
-  const hullCommands = useNCTGraphiteCommands({
-    commands: HULL_COMMANDS,
-    enabled: active?.mode === 'hull' && live,
-    ignoreInputs: true,
-    onAction: (id, event) => handleCommand(id, event),
-    onKeyUp: () => commitStroke(),
-  });
   const metaballCommands = useNCTGraphiteCommands({
     commands: METABALL_COMMANDS,
     enabled: active?.mode === 'metaball' && live,
@@ -157,8 +149,7 @@ function App() {
     onAction: (id, event) => handleCommand(id, event),
     onKeyUp: () => commitStroke(),
   });
-  const commands = active?.mode === 'hull' ? hullCommands
-    : active?.mode === 'metaball' ? metaballCommands
+  const commands = active?.mode === 'metaball' ? metaballCommands
       : active?.mode === 'vector-field' ? vectorCommands
         : active?.mode === 'dot-shading' ? dotCommands
           : hexCommands;
@@ -201,10 +192,6 @@ function App() {
       if (id === 'gridDiamond') return updatePart(doc, (item) => setLayerKind(item, 'hex-flat-diamond'));
       if (id === 'gridTriHoriz') return updatePart(doc, (item) => setLayerKind(item, 'tri-horiz'));
       if (id === 'gridTriVert') return updatePart(doc, (item) => setLayerKind(item, 'tri-vert'));
-      if (id === 'hullTight' && layer.mode === 'hull') return updatePart(doc, (item) => setLayerSetting(item, 'hullMode', 'tight'));
-      if (id === 'hullSmooth' && layer.mode === 'hull') return updatePart(doc, (item) => setLayerSetting(item, 'hullMode', 'smooth'));
-      if (id === 'hullConvex' && layer.mode === 'hull') return updatePart(doc, (item) => setLayerSetting(item, 'hullMode', 'convex'));
-      if (id === 'hullConcave' && layer.mode === 'hull') return updatePart(doc, (item) => setLayerSetting(item, 'hullMode', 'concave'));
       return doc;
     });
   }
@@ -402,14 +389,17 @@ function App() {
     if (base) setDocument((doc) => doc.recordingUndoFrom(base));
   }, [document.activeLayerId, setDocument]);
 
-  const parameters = active ? layerParameters(active) : [];
+  const modeParameters = active ? layerParameters(active) : [];
+  const gridParameter = modeParameters.find(item => item.id === 'kind' || item.id === 'gridKind');
+  const parameters = modeParameters.filter(item => item !== gridParameter);
   const values = active ? Object.fromEntries(parameters.map((item) => [item.id, (active.settings as Record<string, number | boolean | string>)[item.id] ?? item.defaultValue])) : {};
   const parameterSection = (id: string) => {
     if (['mode', 'engine', 'stampShape', 'kind', 'shapeType'].includes(id)) return 'MODE & GEOMETRY';
     if (['columns', 'rows', 'gridResolution', 'size'].includes(id)) return 'GRID';
     if (id.startsWith('subdivide')) return 'ADAPTIVE GRID';
     if (['brushRadius', 'strength', 'intensity', 'falloff', 'falloffType', 'falloffPower'].includes(id)) return 'BRUSH';
-    if (['shapeMode', 'shapeThreshold', 'shapeThickness', 'shapeMerge', 'hullMode'].includes(id)) return 'SHAPE';
+    if (id === 'hullMode') return 'HULL';
+    if (['shapeMode', 'shapeThreshold', 'shapeThickness', 'shapeMerge'].includes(id)) return 'SHAPE';
     if (id.startsWith('show') || id === 'hoverThin') return 'DISPLAY';
     return 'OPTIONS';
   };
@@ -460,7 +450,7 @@ function App() {
       <header className="topbar">
         <span className="brand">GRID PAINT <small>LABS</small></span>
         <span className="topbar-label">{document.displayName}{document.edited ? ' •' : ''}</span>
-        <div className="mode-control" role="group" aria-label="Brush mode">{([['cell-paint', 'Cells'], ['hull', 'Hull'], ['metaball', 'Metaballs'], ['vector-field', 'Vectors'], ['dot-shading', 'Dots']] as [BrushMode, string][]).map(([id, label]) => <button type="button" key={id} aria-pressed={mode === id} onClick={() => { commitStroke(); setMode(id); }}>{label}</button>)}</div>
+        <div className="mode-control" role="group" aria-label="Brush mode">{([['cell-paint', 'Cells'], ['metaball', 'Metaballs'], ['vector-field', 'Vectors'], ['dot-shading', 'Dots']] as [BrushMode, string][]).map(([id, label]) => <button type="button" key={id} aria-pressed={mode === id} onClick={() => { commitStroke(); setMode(id); }}>{label}</button>)}</div>
         <div className="zoom-control">
           <label htmlFor="zoom-slider">Zoom</label>
           <input id="zoom-slider" type="range" min={Math.log(0.1)} max={Math.log(16)} step="any" value={Math.log(zoom)} onChange={event => setCenteredZoom(Math.exp(Number(event.target.value)))} />
@@ -472,6 +462,10 @@ function App() {
           event.currentTarget.value = '';
           if (file) void openDocumentFile(file);
         }} />
+        <div className="header-grid-control" role="group" aria-label={`${active ? layerModeLabel(active) : 'Brush'} grid type`}>
+          <span>Grid</span>
+          {gridParameter?.type === 'select' ? gridParameter.options.map(option => <button key={option.value} type="button" aria-pressed={String((active!.settings as Record<string, unknown>)[gridParameter.id] ?? gridParameter.defaultValue) === option.value} onClick={() => setDocument(doc => updatePart(doc, layer => setLayerSetting(layer, gridParameter.id, option.value, doc.snapshot.canvas)))}>{option.label}</button>) : <button type="button" aria-pressed="true" disabled>Square</button>}
+        </div>
         <select className="file-menu" aria-label="File and history actions" value="" onChange={event => {
           switch (event.target.value) {
             case 'open': fileInput.current?.click(); break;
