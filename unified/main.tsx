@@ -502,7 +502,7 @@ function App() {
         {openError ? <p className="open-error" role="alert">{openError}</p> : null}
         {active && <section className="keyboard-section">
           <p className="drawer-caption">KEYBOARD · {layerModeLabel(active)}</p>
-          <ol className="key-list">{layerCommands(active).map(command => <li key={command.id} className={held.has(command.id) ? 'held' : undefined} title={command.desc}><button type="button" className="key-bind" title={`Rebind ${command.label}`} aria-label={`Rebind ${command.label}`} onClick={() => commands.beginRebind(commands.rebinding === command.id ? null : command.id)}>{commands.rebinding === command.id ? '…' : (commands.keyMap[command.id] ?? command.defaultKey).toUpperCase()}</button><span>{command.label}</span></li>)}</ol>
+          <ol className="key-list">{[...layerCommands(active)].sort((a, b) => (a.id === 'paint' ? 0 : a.id === 'erase' ? 1 : 2) - (b.id === 'paint' ? 0 : b.id === 'erase' ? 1 : 2)).map(command => <li key={command.id} className={held.has(command.id) ? 'held' : undefined} title={command.desc}><button type="button" className="key-bind" title={`Rebind ${command.label}`} aria-label={`Rebind ${command.label}`} onClick={() => commands.beginRebind(commands.rebinding === command.id ? null : command.id)}>{commands.rebinding === command.id ? '…' : (commands.keyMap[command.id] ?? command.defaultKey).toUpperCase()}</button><span>{command.label}</span></li>)}</ol>
         </section>}
         <p className="drawer-caption">LAYERS · DRAG TO REORDER</p>
         <div className="layer-toolbar">
