@@ -1,5 +1,6 @@
-import { makeGridVectors, stampGridVectors, vectorLookup, type VectorGridKind } from './vectorGrid';
-import { sampleSpatialIndex } from './sampleSpatial';
+import { brushPolygon, brushIntersectsPolygon, type BrushShape } from './brushGeometry';
+import { makeGridVectors, stampLocalVectors, vectorLookup, type VectorGridKind } from './vectorGrid';
+import { sampleSpatialIndex, recordSampleChanges } from './sampleSpatial';
 import { adaptiveLattice, childCells, resolveAdaptiveEdges, type AdaptiveData, type AdaptiveCell } from './adaptiveCells';
 import {
   NCTGraphiteDocument,
@@ -14,7 +15,6 @@ import {
   satoNeck,
   stampSampleGain,
   constrainVectorField,
-  stampVectorField,
   vectorBrushOp,
   vectorBrushPickerOps,
   VECTOR_BRUSH_OPS,
@@ -44,6 +44,11 @@ export type { HullLoop, HullMode };
 export const PALETTE = ['#7c5cff', '#00e5ff', '#ff7a45', '#ffe14a', '#38f28a', '#ff4d6d', '#b18aff', '#4af0ff'];
 
 export type CellPaintSettings = {
+  brushType?: 'shape' | 'lattice-shape';
+  showCellPreview?: boolean;
+  brushShape?: BrushShape;
+  brushAngle?: number;
+  activationInset?: number;
   hullMode?: HullMode | 'off';
   subdivideDepth?: number;
   subdivideTarget?: 'shape' | 'grid';
@@ -60,6 +65,11 @@ export type CellPaintSettings = {
 };
 
 export type HullSettings = {
+  brushType?: 'shape' | 'lattice-shape';
+  showCellPreview?: boolean;
+  brushShape?: BrushShape;
+  brushAngle?: number;
+  activationInset?: number;
   subdivideDepth?: number;
   subdivideTarget?: 'shape' | 'grid';
   subdivideFalloff?: boolean;
@@ -182,6 +192,8 @@ export type GridPaintDocument = NCTGraphiteDocument<GridPaintLayer>;
 export type PaintAction = 'paint' | 'erase' | 'toggle' | 'inflate' | 'smooth' | 'placeNeg' | 'attractor' | 'clear' | 'bridge' | 'subdivide' | 'coarsen' | 'scaleDown' | 'scaleUp' | `op:${string}`;
 
 const ADAPTIVE_COMMANDS: NCTGraphiteCommandDef[] = [
+  { id: 'rotateBrushLeft', label: 'Rotate −', desc: 'Rotate brush counterclockwise', defaultKey: ';' },
+  { id: 'rotateBrushRight', label: 'Rotate +', desc: 'Rotate brush clockwise', defaultKey: "'" },
   { id: 'subdivide', label: 'Subdivide', desc: 'Split cells under the brush', defaultKey: 'd' },
   { id: 'coarsen', label: 'Coarsen', desc: 'Restore parent cells under the brush', defaultKey: 's' },
   { id: 'scaleDown', label: 'Shrink cells', desc: 'Reduce painted cell size', defaultKey: 't' },
@@ -270,6 +282,17 @@ const HULL_GRID_OPTIONS = [
   { value: 'tri-vert', label: 'Tri vert' },
 ];
 
+const CELL_BRUSH_PARAMETERS: NCTParameterDefinition[] = [
+  { id: 'brushType', label: 'Brush type', type: 'select', defaultValue: 'shape', options: [{ value: 'shape', label: 'Shape' }, { value: 'lattice-shape', label: 'Lattice shape' }] },
+  { id: 'brushShape', label: 'Brush shape', type: 'select', defaultValue: 'circle', options: [
+    { value: 'circle', label: 'Circle' }, { value: 'square', label: 'Square' },
+    { value: 'hex-flat', label: 'Hex horizontal' }, { value: 'hex-pointy', label: 'Hex vertical' },
+    { value: 'hex-flat-diamond', label: 'Hex diamond' }, { value: 'tri-horiz', label: 'Triangle horizontal' }, { value: 'tri-vert', label: 'Triangle vertical' },
+  ] },
+  { id: 'brushAngle', label: 'Brush angle °', type: 'number', min: 0, max: 359, step: 1, defaultValue: 0 },
+  { id: 'showCellPreview', label: 'Preview affected cells', type: 'boolean', defaultValue: true },
+];
+
 const ADAPTIVE_PARAMETERS: NCTParameterDefinition[] = [
   { id: 'subdivideDepth', label: 'Subdivision depth', type: 'number', min: 0, max: 4, step: 1, defaultValue: 2 },
   { id: 'subdivideTarget', label: 'Subdivision target', type: 'select', defaultValue: 'shape', options: [{ value: 'shape', label: 'Painted' }, { value: 'grid', label: 'Grid' }] },
@@ -280,6 +303,8 @@ export const CELL_PAINT_PARAMETERS: NCTParameterDefinition[] = [
   { id: 'kind', label: 'Grid', type: 'select', defaultValue: 'hex-flat', options: HULL_GRID_OPTIONS },
   { id: 'size', label: 'Cell size', type: 'number', min: 12, max: 48, step: 1, defaultValue: 28 },
   { id: 'brushRadius', label: 'Brush', type: 'number', min: 16, max: 160, step: 4, defaultValue: 56 },
+  ...CELL_BRUSH_PARAMETERS,
+  { id: 'activationInset', label: 'Activation inset %', type: 'number', min: 0, max: 100, step: 1, defaultValue: 0 },
   { id: 'falloff', label: 'Falloff', type: 'number', min: 0, max: 1, step: 0.05, defaultValue: 0 },
   { id: 'showGrid', label: 'Show grid', type: 'boolean', defaultValue: true },
   { id: 'showCenters', label: 'Centers', type: 'boolean', defaultValue: false },
@@ -291,9 +316,11 @@ export const CELL_PAINT_PARAMETERS: NCTParameterDefinition[] = [
 
 export const HULL_PARAMETERS: NCTParameterDefinition[] = [
   ...ADAPTIVE_PARAMETERS,
+  { id: 'activationInset', label: 'Activation inset %', type: 'number', min: 0, max: 100, step: 1, defaultValue: 0 },
   { id: 'kind', label: 'Grid', type: 'select', defaultValue: 'hex-flat', options: HULL_GRID_OPTIONS },
   { id: 'size', label: 'Cell size', type: 'number', min: 8, max: 40, step: 1, defaultValue: 14 },
   { id: 'brushRadius', label: 'Brush', type: 'number', min: 16, max: 160, step: 4, defaultValue: 64 },
+  ...CELL_BRUSH_PARAMETERS,
   { id: 'showGrid', label: 'Show grid', type: 'boolean', defaultValue: false },
   { id: 'hullMode', label: 'Hull', type: 'select', defaultValue: 'convex', options: [
     { value: 'tight', label: 'Tight' },
@@ -582,16 +609,45 @@ export function cellsUnderBrush(
   radius: number,
   size: number,
   falloff = 0,
+  activationInset = 0,
+  brushShape: BrushShape = 'circle',
+  brushAngle = 0,
 ): NCTGraphiteGridCell[] {
   const threshold = radius + size * 0.55;
   const hits: NCTGraphiteGridCell[] = [];
+  const brush = { x: point.x, y: point.y, radius, shape: brushShape, angle: brushAngle };
+  const footprint = brushPolygon(brush);
   for (const cell of cells) {
     const dist = Math.hypot(cell.center.x - point.x, cell.center.y - point.y);
-    if (dist > threshold) continue;
     if (falloff > 0 && 1 - (dist / threshold) * falloff < 0.15) continue;
-    hits.push(cell);
+    const scale = 1 - Math.max(0, Math.min(100, activationInset)) / 100;
+    const polygon = cell.corners.map(p => ({ x: cell.center.x + (p.x - cell.center.x) * scale, y: cell.center.y + (p.y - cell.center.y) * scale }));
+    if (brushIntersectsPolygon(brush, polygon, footprint)) hits.push(cell);
   }
   return hits;
+}
+
+/** Snap to a translation-invariant root-cell lattice, independent of subdivision. */
+export function cellBrushAnchor(layer: CellMeshLayer, canvas: NCTGraphiteDocumentCanvas, point: NCTGraphitePoint): NCTGraphitePoint {
+  if ((layer.settings.brushType ?? 'shape') !== 'lattice-shape') return point;
+  const extent = layer.settings.size * 3;
+  const candidates = gridCellsInBounds(layerGridSpec(layer, canvas), { minX: point.x - extent, minY: point.y - extent, maxX: point.x + extent, maxY: point.y + extent });
+  // Triangles and diamonds have multiple subcells per repeating lattice unit.
+  // Anchor to the same subcell in each unit so the brush pattern doesn't flip.
+  const anchors = candidates.filter(cell => cell.s === undefined || cell.s === 0);
+  let best: NCTGraphiteGridCell | undefined, distance = Infinity;
+  for (const cell of anchors) {
+    const d = (cell.center.x - point.x) ** 2 + (cell.center.y - point.y) ** 2;
+    if (d < distance) { best = cell; distance = d; }
+  }
+  return best?.center ?? point;
+}
+
+export function cellBrushHits(layer: CellMeshLayer, canvas: NCTGraphiteDocumentCanvas, point: NCTGraphitePoint): NCTGraphiteGridCell[] {
+  const center = cellBrushAnchor(layer, canvas, point);
+  const lattice = brushLattice(layer, canvas, center);
+  const falloff = layer.mode === 'cell-paint' ? layer.settings.falloff : 0;
+  return cellsUnderBrush(lattice, center, layer.settings.brushRadius, layer.settings.size, falloff, layer.settings.activationInset ?? 0, layer.settings.brushShape ?? 'circle', layer.settings.brushAngle ?? 0);
 }
 
 function paintCellMeshAt(
@@ -600,9 +656,7 @@ function paintCellMeshAt(
   point: NCTGraphitePoint,
   action: PaintAction,
 ): CellMeshLayer {
-  const lattice = brushLattice(layer, canvas, point);
-  const falloff = layer.mode === 'cell-paint' ? layer.settings.falloff : 0;
-  const hits = cellsUnderBrush(lattice, point, layer.settings.brushRadius, layer.settings.size, falloff);
+  const hits = cellBrushHits(layer, canvas, point);
   if (hits.length === 0) return layer;
   const color = PALETTE[layer.settings.colorIndex % PALETTE.length];
   const cells = { ...layer.data.cells };
@@ -628,7 +682,9 @@ function editAdaptiveCells(layer: CellMeshLayer, canvas: NCTGraphiteDocumentCanv
   const leaves = brushLattice(layer, canvas, point);
   const radius = layer.settings.brushRadius;
   const target = layer.settings.subdivideTarget ?? 'shape';
-  const hits = leaves.filter(cell => Math.hypot(cell.center.x - point.x, cell.center.y - point.y) <= radius && (action === 'scaleDown' || action === 'scaleUp' || target === 'grid' || !!layer.data.cells[cell.id]));
+  const footprint = { x: point.x, y: point.y, radius, shape: layer.settings.brushShape ?? 'circle' as BrushShape, angle: layer.settings.brushAngle ?? 0 };
+  const brushPoints = brushPolygon(footprint);
+  const hits = leaves.filter(cell => brushIntersectsPolygon(footprint, [cell.center], brushPoints) && (action === 'scaleDown' || action === 'scaleUp' || target === 'grid' || !!layer.data.cells[cell.id]));
   if (!hits.length) return layer;
   const cells = { ...layer.data.cells }, splits = { ...layer.data.splits }, scales = { ...layer.data.scales };
   if (action === 'scaleDown' || action === 'scaleUp') {
@@ -757,25 +813,14 @@ function paintVectorAt(
   }
   const stampAction = action === 'smooth' ? 'smooth' : action === 'erase' ? 'erase' : 'paint';
   const kind = layer.settings.gridKind ?? 'square';
-  const vectors = kind === 'square' ? stampVectorField(layer.data.vectors, {
-    columns: layer.settings.columns,
-    rows: layer.settings.rows,
-    x: point.x,
-    y: point.y,
-    radius: layer.settings.brushRadius,
-    action: stampAction,
-    op: action.startsWith('op:') ? action.slice(3) : undefined,
-    mode: layer.settings.mode,
-    strength: layer.settings.strength,
-    velocityX: extra?.velocityX,
-    velocityY: extra?.velocityY,
-    limits: vectorLimitsOf(layer.settings),
-  }) : stampGridVectors(layer.data.vectors, {
-    kind, spacing: Math.min((canvas?.width ?? 960) / layer.settings.columns, (canvas?.height ?? 660) / layer.settings.rows),
+  const vectors = stampLocalVectors(layer.data.vectors, {
+    kind, columns: layer.settings.columns, rows: layer.settings.rows,
+    spacing: Math.min((canvas?.width ?? 960) / layer.settings.columns, (canvas?.height ?? 660) / layer.settings.rows),
     x: point.x, y: point.y, radius: layer.settings.brushRadius,
     op: action.startsWith('op:') ? action.slice(3) : stampAction === 'paint' ? layer.settings.mode : stampAction,
     strength: layer.settings.strength, velocityX: extra?.velocityX, velocityY: extra?.velocityY, limits: vectorLimitsOf(layer.settings),
   });
+  if (vectors === layer.data.vectors) return layer;
   return { ...layer, data: { ...layer.data, vectors } };
 }
 
@@ -810,7 +855,12 @@ function paintDotAt(
   });
   if (stamped.every((sample, i) => sample.radius === original[candidates[i]].radius && sample.rotation === original[candidates[i]].rotation)) return layer;
   const points = original.slice();
-  for (let i = 0; i < candidates.length; i++) points[candidates[i]] = stamped[i];
+  const changed: number[] = [];
+  for (let i = 0; i < candidates.length; i++) {
+    const at = candidates[i];
+    if (stamped[i].radius !== original[at].radius || stamped[i].rotation !== original[at].rotation) { points[at] = stamped[i]; changed.push(at); }
+  }
+  recordSampleChanges(points, original, changed);
   dotSampleIndices.set(points, index);
   return {
     ...layer,
@@ -837,7 +887,7 @@ export function paintLayerAt(
     if (action === 'inflate' || action === 'placeNeg' || action === 'attractor' || action === 'toggle') return layer;
     return paintDotAt(layer, canvas, point, action, extra);
   }
-  if (action === 'subdivide' || action === 'coarsen' || action === 'scaleDown' || action === 'scaleUp') return editAdaptiveCells(layer, canvas, point, action);
+  if (action === 'subdivide' || action === 'coarsen' || action === 'scaleDown' || action === 'scaleUp') return editAdaptiveCells(layer, canvas, cellBrushAnchor(layer, canvas, point), action);
   if (action === 'inflate' || action === 'smooth' || action === 'placeNeg' || action === 'attractor' || action === 'clear') return layer;
   return paintCellMeshAt(layer, canvas, point, action);
 }
@@ -905,7 +955,7 @@ export function setLayerSetting(
     const next = setLayerSetting(vector, id.slice(7), value, canvas) as VectorFieldLayer;
     return next === vector ? layer : { ...layer, data: { ...layer.data, vectorField: next } };
   }
-  if (!(id in layer.settings) && !(layer.mode === 'vector-field' && (id.startsWith('shape') || id === 'gridKind' || id === 'showGrid')) && !(layer.mode === 'cell-paint' && id === 'hullMode') && !(layer.mode === 'metaball' && ['snap', 'rectAspect', 'cornerT', 'influenceRange'].includes(id)) && !((layer.mode === 'cell-paint' || layer.mode === 'hull') && ['subdivideDepth', 'subdivideTarget', 'subdivideFalloff'].includes(id))) return layer;
+  if (!(id in layer.settings) && !(layer.mode === 'vector-field' && (id.startsWith('shape') || id === 'gridKind' || id === 'showGrid')) && !(layer.mode === 'cell-paint' && id === 'hullMode') && !(layer.mode === 'metaball' && ['snap', 'rectAspect', 'cornerT', 'influenceRange'].includes(id)) && !((layer.mode === 'cell-paint' || layer.mode === 'hull') && ['subdivideDepth', 'subdivideTarget', 'subdivideFalloff', 'activationInset', 'brushType', 'brushShape', 'brushAngle', 'showCellPreview'].includes(id))) return layer;
   if ( (layer.settings as Record<string, unknown>)[id] === value) return layer;
   const settings = { ...layer.settings, [id]: value };
   if (layer.mode === 'metaball' && id === 'engine' && value === 'vector' && canvas && !layer.data.vectorField) {

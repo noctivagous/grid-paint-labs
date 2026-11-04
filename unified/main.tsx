@@ -10,7 +10,7 @@ import {
   viewportToDocument,
 } from '@nct/nctgraphite';
 import type { NCTGraphiteViewportTransform } from '@nct/nctgraphite';
-import { drawBrush, drawDocument, drawWorkspaceGrid } from './draw';
+import { drawBrush, drawCellBrushPreview, drawDocument, drawWorkspaceGrid } from './draw';
 import { vectorShapePath } from './vectorShapes';
 import {
   adjustBrush,
@@ -30,6 +30,7 @@ import {
   layerModeLabel,
   layerContents,
   modeLayer,
+  cellBrushAnchor,
   metaballVectorLayer,
   updateModeLayer,
   type BrushMode,
@@ -186,6 +187,7 @@ function App() {
         return updatePart(doc, (item) => item.mode === 'dot-shading' ? reJitterDotLayer(item, doc.snapshot.canvas) : item);
       }
       if ((id === 'intensityDown' || id === 'intensityUp') && layer.mode === 'dot-shading') return updatePart(doc, item => item.mode === 'dot-shading' ? setLayerSetting(item, 'intensity', Math.max(0.1, Math.min(3, Math.round((item.settings.intensity + (id === 'intensityUp' ? 0.1 : -0.1)) * 10) / 10))) : item);
+      if ((id === 'rotateBrushLeft' || id === 'rotateBrushRight') && (layer.mode === 'cell-paint' || layer.mode === 'hull')) return updatePart(doc, item => (item.mode === 'cell-paint' || item.mode === 'hull') ? setLayerSetting(item, 'brushAngle', ((item.settings.brushAngle ?? 0) + (id === 'rotateBrushRight' ? 15 : -15) + 360) % 360) : item);
       if (id === 'brushSmaller') return updatePart(doc, (item) => adjustBrush(item, -8));
       if (id === 'brushLarger') return updatePart(doc, (item) => adjustBrush(item, 8));
       if (id === 'showGrid') return updatePart(doc, (item) => setLayerSetting(item, 'showGrid', !('showGrid' in item.settings && item.settings.showGrid)));
@@ -364,8 +366,9 @@ function App() {
     const layer = active;
     const point = pointer.current;
     const brush = layer && point ? {
-      x: point.x, y: point.y, radius: layer.settings.brushRadius,
+      ...((layer.mode === 'cell-paint' || layer.mode === 'hull') ? cellBrushAnchor(layer, canvasSize, point) : point), radius: layer.settings.brushRadius,
       color: PALETTE[layer.settings.colorIndex % PALETTE.length],
+      ...((layer.mode === 'cell-paint' || layer.mode === 'hull') ? { shape: layer.settings.brushShape, angle: layer.settings.brushAngle } : {}),
     } : null;
     const painting = heldPaintAction(held, commandMode) != null;
     drawDocument(p, document, brush, painting, false, mode);
@@ -375,7 +378,8 @@ function App() {
     const p = scope.current;
     if (!p) return;
     const layer = active, point = pointer.current;
-    drawBrush(p, layer && point ? { x: point.x, y: point.y, radius: layer.settings.brushRadius, color: PALETTE[layer.settings.colorIndex % PALETTE.length] } : null);
+    drawCellBrushPreview(p, layer && (layer.mode === 'cell-paint' || layer.mode === 'hull') ? layer : null, canvasSize, point);
+    drawBrush(p, layer && point ? { ...((layer.mode === 'cell-paint' || layer.mode === 'hull') ? cellBrushAnchor(layer, canvasSize, point) : point), radius: layer.settings.brushRadius, color: PALETTE[layer.settings.colorIndex % PALETTE.length], ...((layer.mode === 'cell-paint' || layer.mode === 'hull') ? { shape: layer.settings.brushShape, angle: layer.settings.brushAngle } : {}) } : null);
   }, [document, pointerLabel, mode]);
 
   useEffect(() => {
@@ -393,6 +397,20 @@ function App() {
     if (base) setDocument((doc) => doc.recordingUndoFrom(base));
   }, [document.activeLayerId, setDocument]);
 
+  const keyGroups = active ? [
+    { label: 'Paint', match: (id: string) => id === 'paint' || id === 'erase' },
+    { label: 'Brush', match: (id: string) => ['brushSmaller', 'brushLarger', 'rotateBrushLeft', 'rotateBrushRight', 'intensityDown', 'intensityUp'].includes(id) },
+    { label: 'Cell editing', match: (id: string) => ['subdivide', 'coarsen', 'scaleDown', 'scaleUp'].includes(id) },
+    { label: 'Vector operations', match: (id: string) => id.startsWith('op:') },
+    { label: 'Grid & hull', match: (id: string) => id.startsWith('grid') || id.startsWith('hull') || id === 'showGrid' },
+    { label: 'Actions', match: (_id: string) => true },
+  ].reduce<{ label: string; commands: ReturnType<typeof layerCommands> }[]>((groups, group) => {
+    const assigned = new Set(groups.flatMap(item => item.commands.map(command => command.id)));
+    const list = layerCommands(active).filter(command => !assigned.has(command.id) && group.match(command.id));
+    if (group.label === 'Paint') list.sort((a, b) => (a.id === 'paint' ? 0 : 1) - (b.id === 'paint' ? 0 : 1));
+    if (list.length) groups.push({ label: group.label, commands: list });
+    return groups;
+  }, []) : [];
   const modeParameters = active ? layerParameters(active) : [];
   const gridParameter = modeParameters.find(item => item.id === 'kind' || item.id === 'gridKind' || item.id === 'vector:gridKind');
   const parameters = modeParameters.filter(item => item !== gridParameter);
@@ -402,7 +420,7 @@ function App() {
     if (['mode', 'engine', 'stampShape', 'kind', 'shapeType'].includes(id)) return 'MODE & GEOMETRY';
     if (['columns', 'rows', 'gridResolution', 'size'].includes(id)) return 'GRID';
     if (id.startsWith('subdivide')) return 'ADAPTIVE GRID';
-    if (['brushRadius', 'strength', 'intensity', 'falloff', 'falloffType', 'falloffPower'].includes(id)) return 'BRUSH';
+    if (['brushRadius', 'brushType', 'brushShape', 'brushAngle', 'showCellPreview', 'strength', 'intensity', 'falloff', 'falloffType', 'falloffPower'].includes(id)) return 'BRUSH';
     if (id === 'hullMode') return 'HULL';
     if (['shapeMode', 'shapeThreshold', 'shapeThickness', 'shapeMerge'].includes(id)) return 'SHAPE';
     if (id.startsWith('show') || id === 'hoverThin') return 'DISPLAY';
@@ -456,6 +474,9 @@ function App() {
         <span className="brand">GRID PAINT <small>LABS</small></span>
         <span className="topbar-label">{document.displayName}{document.edited ? ' •' : ''}</span>
         <div className="mode-control" role="group" aria-label="Brush mode">{([['cell-paint', 'Cells'], ['metaball', 'Metaballs'], ['vector-field', 'Vectors'], ['dot-shading', 'Dots']] as [BrushMode, string][]).map(([id, label]) => <button type="button" key={id} aria-pressed={mode === id} onClick={() => { commitStroke(); setMode(id); }}><ModeIcon value={id} /><span>{label}</span></button>)}</div>
+        <select className="header-compact-select mode-select" aria-label="Brush mode" value={mode} onChange={event => { commitStroke(); setMode(event.target.value as BrushMode); }}>
+          <option value="cell-paint">Cells</option><option value="metaball">Metaballs</option><option value="vector-field">Vectors</option><option value="dot-shading">Dots</option>
+        </select>
         <div className="zoom-control">
           <label htmlFor="zoom-slider">Zoom</label>
           <input id="zoom-slider" type="range" min={Math.log(0.1)} max={Math.log(16)} step="any" value={Math.log(zoom)} onChange={event => setCenteredZoom(Math.exp(Number(event.target.value)))} />
@@ -474,6 +495,9 @@ function App() {
           <span>Grid</span>
           {gridParameter?.type === 'select' ? gridParameter.options.map(option => <button key={option.value} type="button" aria-pressed={String(parameterValue(gridParameter.id) ?? gridParameter.defaultValue) === option.value} title={option.label} aria-label={option.label} onClick={() => setDocument(doc => updatePart(doc, layer => setLayerSetting(layer, gridParameter.id, option.value, doc.snapshot.canvas)))}><GridIcon value={option.value} /><span>{option.label}</span></button>) : <button type="button" aria-pressed="true" disabled><GridIcon value="square" /><span>Square</span></button>}
         </div>
+        <select className="header-compact-select grid-select" aria-label={`${active ? layerModeLabel(active) : 'Brush'} grid type`} disabled={gridParameter?.type !== 'select'} value={gridParameter?.type === 'select' ? String(parameterValue(gridParameter.id) ?? gridParameter.defaultValue) : 'square'} onChange={event => { const value = event.target.value; if (gridParameter?.type === 'select') setDocument(doc => updatePart(doc, layer => setLayerSetting(layer, gridParameter.id, value, doc.snapshot.canvas))); }}>
+          {gridParameter?.type === 'select' ? gridParameter.options.map(option => <option key={option.value} value={option.value}>{option.label}</option>) : <option value="square">Square</option>}
+        </select>
         <select className="file-menu" aria-label="File and history actions" value="" onChange={event => {
           switch (event.target.value) {
             case 'open': fileInput.current?.click(); break;
@@ -502,7 +526,10 @@ function App() {
         {openError ? <p className="open-error" role="alert">{openError}</p> : null}
         {active && <section className="keyboard-section">
           <p className="drawer-caption">KEYBOARD · {layerModeLabel(active)}</p>
-          <ol className="key-list">{[...layerCommands(active)].sort((a, b) => (a.id === 'paint' ? 0 : a.id === 'erase' ? 1 : 2) - (b.id === 'paint' ? 0 : b.id === 'erase' ? 1 : 2)).map(command => <li key={command.id} className={held.has(command.id) ? 'held' : undefined} title={command.desc}><button type="button" className="key-bind" title={`Rebind ${command.label}`} aria-label={`Rebind ${command.label}`} onClick={() => commands.beginRebind(commands.rebinding === command.id ? null : command.id)}>{commands.rebinding === command.id ? '…' : (commands.keyMap[command.id] ?? command.defaultKey).toUpperCase()}</button><span>{command.label}</span></li>)}</ol>
+          <div className="key-groups">{keyGroups.map(group => <section className="key-group" key={group.label} aria-label={`${group.label} shortcuts`}>
+            <div className="key-group-label">{group.label}</div>
+            <ol className="key-list">{group.commands.map(command => <li key={command.id} className={held.has(command.id) ? 'held' : undefined} title={command.desc}><button type="button" className="key-bind" title={`Rebind ${command.label}`} aria-label={`Rebind ${command.label}`} onClick={() => commands.beginRebind(commands.rebinding === command.id ? null : command.id)}>{commands.rebinding === command.id ? '…' : (commands.keyMap[command.id] ?? command.defaultKey).toUpperCase()}</button><span>{command.label}</span></li>)}</ol>
+          </section>)}</div>
         </section>}
         <p className="drawer-caption">LAYERS · DRAG TO REORDER</p>
         <div className="layer-toolbar">

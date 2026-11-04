@@ -1,0 +1,33 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { build } from 'esbuild';
+import { fileURLToPath } from 'node:url';
+const nct = fileURLToPath(new URL('../NCTGraphite/packages/nctgraphite/src/index.ts', import.meta.url));
+const result = await build({ stdin: { contents: `export { cellsUnderBrush, createCellPaintLayer, createUnifiedDocument, layerLattice, paintLayerAt, setLayerSetting, hullOutlines } from './unified/layers.ts'; export { openGridPaintFile } from './unified/records.ts';`, resolveDir: process.cwd(), loader: 'ts' }, bundle: true, write: false, format: 'esm', platform: 'neutral', alias: { '@nct/nctgraphite': nct }, logLevel: 'silent' });
+const api = await import(`data:text/javascript;base64,${Buffer.from(result.outputFiles[0].contents).toString('base64')}`);
+const square = { id: '0,0', q: 0, r: 0, center: { x: 0, y: 0 }, corners: [{ x: -10, y: -10 }, { x: 10, y: -10 }, { x: 10, y: 10 }, { x: -10, y: 10 }] };
+const hits = (point, radius, inset) => api.cellsUnderBrush([square], point, radius, 10, 0, inset).length;
+test('brush intersects inset polygon edges, interiors and corners precisely', () => {
+  assert.equal(hits({ x: 9, y: 0 }, 0.5, 0), 1);
+  assert.equal(hits({ x: 9, y: 0 }, 0.5, 50), 0);
+  assert.equal(hits({ x: 6, y: 0 }, 1, 50), 1);
+  assert.equal(hits({ x: 6, y: 6 }, 1, 50), 0);
+  assert.equal(hits({ x: 6, y: 6 }, 1.5, 50), 1);
+  assert.equal(hits({ x: 0, y: 0 }, 0, 100), 1);
+  assert.equal(hits({ x: 1, y: 0 }, 0.5, 100), 0);
+});
+test('inset applies equally to paint, erase and toggle without altering cell geometry', () => {
+  const doc = api.createUnifiedDocument(), canvas = doc.snapshot.canvas;
+  let layer = api.createCellPaintLayer({ settings: { kind: 'square', size: 20, brushRadius: 2 } });
+  const cell = api.layerLattice(layer, canvas).find(c => c.q === 0 && c.r === 0), center = cell.center;
+  const edge = { x: center.x + 18, y: center.y };
+  const painted = api.paintLayerAt(layer, canvas, edge, 'paint');
+  assert.ok(painted.data.cells[cell.id]);
+  layer = api.setLayerSetting(painted, 'activationInset', 50, canvas);
+  for (const action of ['erase', 'toggle']) assert.equal(api.paintLayerAt(layer, canvas, edge, action), layer);
+  assert.equal(api.paintLayerAt(layer, canvas, center, 'erase').data.cells[cell.id], undefined);
+  assert.deepEqual(api.layerLattice(layer, canvas).find(c => c.id === cell.id).corners, cell.corners);
+  assert.ok(api.hullOutlines({ ...layer, settings: { ...layer.settings, hullMode: 'tight' } }, canvas).length);
+  const reopened = api.openGridPaintFile(doc.insertingLayer(layer).toJSON());
+  assert.equal(reopened.activeLayer.settings.activationInset, 50);
+});

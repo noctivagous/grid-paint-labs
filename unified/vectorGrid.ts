@@ -1,4 +1,4 @@
-import { sampleSpatialIndex } from './sampleSpatial';
+import { sampleSpatialIndex, recordSampleChanges } from './sampleSpatial';
 import { gridCellsInBounds, makeVectorField, vectorBrushOp, constrainVector, type NCTGraphiteDocumentCanvas, type NCTGraphiteGridCell, type VectorFieldLimits, type VectorSample } from '@nct/nctgraphite';
 
 export type VectorGridKind = 'square' | 'triangle' | 'hex';
@@ -45,4 +45,40 @@ export function stampGridVectors(field: readonly VectorSample[], options: { kind
     const v = brush.apply({ sample, brushX: options.x, brushY: options.y, falloff: 1 - distance / options.radius, strength: options.strength, paintScale: 1, velocityX: options.velocityX ?? 0, velocityY: options.velocityY ?? 0, neighbors });
     return { ...sample, ...constrainVector(v.vx, v.vy, options.limits) };
   });
+}
+
+const vectorIndices = new WeakMap<readonly VectorSample[], ReturnType<typeof sampleSpatialIndex<VectorSample>>>();
+/** Apply an operation only to samples within the brush while reading neighbors from the original field. */
+export function stampLocalVectors(field: readonly VectorSample[], options: { kind: VectorGridKind; columns: number; rows: number; spacing: number; x: number; y: number; radius: number; op: string; strength: number; velocityX?: number; velocityY?: number; limits: VectorFieldLimits }): VectorSample[] {
+  let index = vectorIndices.get(field);
+  if (!index) { index = sampleSpatialIndex(field, options.spacing); vectorIndices.set(field, index); }
+  const brush = vectorBrushOp(options.op), hits = index.within(options.x, options.y, options.radius).sort((a, b) => a.index - b.index);
+  if (!hits.length) return field as VectorSample[];
+  let next: VectorSample[] | undefined;
+  const changed: number[] = [];
+  for (const hit of hits) {
+    const sample = field[hit.index];
+    let neighbors: VectorSample[] | undefined;
+    if (brush.needsNeighbors) {
+      if (options.kind === 'square') {
+        neighbors = [];
+        const col = hit.index % options.columns, row = Math.floor(hit.index / options.columns);
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+          const x = col + dx, y = row + dy;
+          if (x >= 0 && y >= 0 && x < options.columns && y < options.rows) neighbors.push(field[y * options.columns + x]);
+        }
+      } else {
+        neighbors = index.within(sample.x, sample.y, options.spacing * 1.6).sort((a, b) => a.d - b.d).slice(0, options.kind === 'triangle' ? 4 : 7).map(item => field[item.index]);
+      }
+    }
+    const written = brush.apply({ sample, brushX: options.x, brushY: options.y, falloff: 1 - hit.d / options.radius, strength: options.strength, paintScale: 1, velocityX: options.velocityX ?? 0, velocityY: options.velocityY ?? 0, neighbors });
+    const value = constrainVector(written.vx, written.vy, options.limits);
+    if (sample.vx === value.vx && sample.vy === value.vy) continue;
+    next ??= field.slice();
+    next[hit.index] = { ...sample, ...value }; changed.push(hit.index);
+  }
+  if (!next) return field as VectorSample[];
+  recordSampleChanges(next, field, changed);
+  vectorIndices.set(next, index);
+  return next;
 }
